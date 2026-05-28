@@ -1,0 +1,7 @@
+models/
+workspace/
+claude/settings.local.json
+__pycache__/
+*.pyc
+.venv/
+*.egg-info
