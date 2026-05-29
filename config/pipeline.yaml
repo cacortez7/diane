@@ -1,0 +1,7 @@
+project_codename: "Diane"
+version: "1.0.0"
+hardware_target: "RTX 4070 Ti SUPER"
+vram_gb: 16
+source_language: "en"
+target_language: "es"
+default_preset: "balanced"
