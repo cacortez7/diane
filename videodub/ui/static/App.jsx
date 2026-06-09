@@ -50,6 +50,9 @@ function App() {
   const [hasEnvKey, setHasEnvKey] = React.useState(true);
   const [template, setTemplate] = React.useState('YouTube Tech/AI');
   const [instructions, setInstructions] = React.useState(TEMPLATES['YouTube Tech/AI']);
+  const [inputTab, setInputTab] = React.useState('file');   // file | url
+  const [url, setUrl] = React.useState('');
+  const [fetching, setFetching] = React.useState(false);
   const [stages, setStages] = React.useState([]);
   const [logs, setLogs] = React.useState([]);
   const [vramUsed, setVramUsed] = React.useState(0);
@@ -98,6 +101,29 @@ function App() {
     setPhase('idle'); setStages([]); setLogs([]); setElapsed(0); setJob('');
   };
 
+  const fetchUrl = async () => {
+    if (!url.trim() || fetching) return;
+    setFetching(true);
+    push('info', `descargando ${url.trim()} con yt-dlp…`);
+    try {
+      const r = await fetch('/api/download-url', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ url: url.trim() }),
+      });
+      const d = await r.json();
+      if (!r.ok) throw new Error(d.detail || r.statusText);
+      setFile({ source: 'url', file_id: d.file_id, name: d.name,
+        size: d.size_bytes, res: d.resolution, duration_s: d.duration_s });
+      push('success', `✓ descargado ${d.name} (${(d.size_bytes / 1048576).toFixed(1)} MB)`);
+      if (phase === 'done') reset();
+    } catch (e) {
+      push('error', `✗ descarga falló — ${e.message || e}`);
+    } finally {
+      setFetching(false);
+    }
+  };
+
   const onEvent = (ev) => {
     if (ev.type === 'job_start') {
       setJob(ev.job_id);
@@ -135,7 +161,8 @@ function App() {
     push('debug', `preset=${preset} · backend=${backend} · target=es-419`);
 
     const form = new FormData();
-    form.append('file', file);
+    if (file.source === 'url') form.append('file_id', file.file_id);
+    else form.append('file', file);
     form.append('preset', preset);
     form.append('backend', backend);
     form.append('instructions', instructions);
@@ -174,7 +201,20 @@ function App() {
         {/* ---------- CONFIG ---------- */}
         <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-5)' }}>
           <Card title="01 · ENTRADA">
-            <UploadDropzone file={file} onPick={(f) => { setFile(f); if (phase === 'done') reset(); }} />
+            <SegmentedControl block value={inputTab} onChange={setInputTab}
+              options={[
+                { value: 'file', label: 'Subir archivo' },
+                { value: 'url', label: 'URL de YouTube' },
+              ]} />
+            <div style={{ marginTop: 'var(--space-4)' }}>
+              {inputTab === 'file' ? (
+                <UploadDropzone file={file && file.source !== 'url' ? file : null}
+                  onPick={(f) => { setFile(f); if (phase === 'done') reset(); }} />
+              ) : (
+                <YoutubeInput file={file} url={url} setUrl={setUrl}
+                  fetching={fetching} onFetch={fetchUrl} onClear={() => setFile(null)} />
+              )}
+            </div>
           </Card>
 
           <Card title="02 · PRESET">
@@ -273,6 +313,38 @@ function App() {
           </Card>
         </div>
       </div>
+    </div>
+  );
+}
+
+function YoutubeInput({ file, url, setUrl, fetching, onFetch, onClear }) {
+  const fetched = file && file.source === 'url';
+  if (fetched) {
+    const dur = file.duration_s
+      ? `${Math.floor(file.duration_s / 60)}:${String(Math.floor(file.duration_s % 60)).padStart(2, '0')}` : '';
+    return (
+      <button type="button" onClick={onClear} style={{
+        width: '100%', textAlign: 'left', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 'var(--space-4)',
+        padding: '14px 16px', background: 'var(--green-deep)', border: '1px solid var(--green-dim)', borderRadius: 'var(--radius-md)' }}>
+        <span style={{ color: 'var(--green)', display: 'grid', placeItems: 'center' }}><IconFilm size={26} /></span>
+        <span style={{ display: 'flex', flexDirection: 'column', gap: 3, minWidth: 0 }}>
+          <span style={{ fontFamily: 'var(--font-mono)', fontSize: 13, color: 'var(--green-bright)',
+            overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{file.name}</span>
+          <span style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--text-muted)' }}>
+            YouTube · {file.res}{dur ? ` · ${dur}` : ''} — clic para quitar
+          </span>
+        </span>
+      </button>
+    );
+  }
+  return (
+    <div style={{ display: 'flex', gap: 'var(--space-2)', alignItems: 'stretch' }}>
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <TextField value={url} onChange={setUrl} placeholder="https://www.youtube.com/watch?v=…"
+          prefix={<span style={{ display: 'grid', placeItems: 'center', width: 19, height: 14, borderRadius: 3, background: 'var(--red)', color: '#0c1213' }}><IconPlay size={9} /></span>} />
+      </div>
+      <Button variant="primary" size="md" disabled={!url.trim() || fetching} loading={fetching} onClick={onFetch}
+        aria-label="Obtener video" leadingIcon={fetching ? null : <IconDownload size={16} />} />
     </div>
   );
 }

@@ -57,6 +57,8 @@ function App() {
   const [apiKey, setApiKey] = React.useState('');
   const [template, setTemplate] = React.useState('YouTube Tech/AI');
   const [instructions, setInstructions] = React.useState(TEMPLATES['YouTube Tech/AI']);
+  const [inputTab, setInputTab] = React.useState('file');   // file | url
+  const [url, setUrl] = React.useState('');
   const [stages, setStages] = React.useState([]);
   const [logs, setLogs] = React.useState([]);
   const [vram, setVram] = React.useState(IDLE_VRAM);
@@ -79,6 +81,13 @@ function App() {
   }, [logs]);
 
   const reset = () => { clearAll(); setPhase('idle'); setStages([]); setLogs([]); setVram(IDLE_VRAM); setElapsed(0); };
+
+  const fetchUrl = () => {
+    if (!url.trim()) return;
+    const m = url.match(/(?:v=|youtu\.be\/|shorts\/)([\w-]{4,})/);
+    setFile({ name: `youtube_${m ? m[1] : 'video'}.mp4`, res: '1080p', dur: '12:48', size: '~', source: 'url' });
+    if (phase === 'done') reset();
+  };
 
   const start = () => {
     clearAll();
@@ -131,7 +140,19 @@ function App() {
         {/* ---------- CONFIG ---------- */}
         <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-5)' }}>
           <Card title="01 · ENTRADA">
-            <UploadDropzone file={file} onPick={(f) => { setFile(f); if (phase === 'done') reset(); }} />
+            <SegmentedControl block value={inputTab} onChange={setInputTab}
+              options={[
+                { value: 'file', label: 'Subir archivo' },
+                { value: 'url', label: 'URL de YouTube' },
+              ]} />
+            <div style={{ marginTop: 'var(--space-4)' }}>
+              {inputTab === 'file' ? (
+                <UploadDropzone file={file && file.source !== 'url' ? file : null}
+                  onPick={(f) => { setFile(f); if (phase === 'done') reset(); }} />
+              ) : (
+                <YoutubeInput file={file} url={url} setUrl={setUrl} onFetch={fetchUrl} onClear={() => setFile(null)} />
+              )}
+            </div>
           </Card>
 
           <Card title="02 · PRESET">
@@ -229,6 +250,35 @@ function App() {
           </Card>
         </div>
       </div>
+    </div>
+  );
+}
+
+function YoutubeInput({ file, url, setUrl, onFetch, onClear }) {
+  const fetched = file && file.source === 'url';
+  if (fetched) {
+    return (
+      <button type="button" onClick={onClear} style={{
+        width: '100%', textAlign: 'left', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 'var(--space-4)',
+        padding: '14px 16px', background: 'var(--green-deep)', border: '1px solid var(--green-dim)', borderRadius: 'var(--radius-md)' }}>
+        <span style={{ color: 'var(--green)', display: 'grid', placeItems: 'center' }}><IconFilm size={26} /></span>
+        <span style={{ display: 'flex', flexDirection: 'column', gap: 3, minWidth: 0 }}>
+          <span style={{ fontFamily: 'var(--font-mono)', fontSize: 13, color: 'var(--green-bright)' }}>{file.name}</span>
+          <span style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--text-muted)' }}>
+            YouTube · {file.res} · {file.dur} — clic para quitar
+          </span>
+        </span>
+      </button>
+    );
+  }
+  return (
+    <div style={{ display: 'flex', gap: 'var(--space-2)', alignItems: 'stretch' }}>
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <TextField value={url} onChange={setUrl} placeholder="https://www.youtube.com/watch?v=…"
+          prefix={<span style={{ display: 'grid', placeItems: 'center', width: 19, height: 14, borderRadius: 3, background: 'var(--red)', color: '#0c1213' }}><IconPlay size={9} /></span>} />
+      </div>
+      <Button variant="primary" size="md" disabled={!url.trim()} onClick={onFetch}
+        aria-label="Obtener video" leadingIcon={<IconDownload size={16} />} />
     </div>
   );
 }

@@ -1,4 +1,4 @@
-/* @ds-bundle: {"format":3,"namespace":"DianeDesignSystem_fdee8c","components":[{"name":"Badge","sourcePath":"components/core/Badge.jsx"},{"name":"Button","sourcePath":"components/core/Button.jsx"},{"name":"Card","sourcePath":"components/core/Card.jsx"},{"name":"RadioCards","sourcePath":"components/forms/RadioCards.jsx"},{"name":"SegmentedControl","sourcePath":"components/forms/SegmentedControl.jsx"},{"name":"Select","sourcePath":"components/forms/Select.jsx"},{"name":"TextField","sourcePath":"components/forms/TextField.jsx"},{"name":"Toggle","sourcePath":"components/forms/Toggle.jsx"},{"name":"StageStep","sourcePath":"components/pipeline/StageStep.jsx"},{"name":"Terminal","sourcePath":"components/pipeline/Terminal.jsx"},{"name":"VramMeter","sourcePath":"components/pipeline/VramMeter.jsx"}],"sourceHashes":{"assets/diane-ui.preview.js":"31187e26f74e","components/core/Badge.jsx":"0b2efd2fcaee","components/core/Button.jsx":"773aacb681b7","components/core/Card.jsx":"c201fb487615","components/forms/RadioCards.jsx":"7b998c6d469c","components/forms/SegmentedControl.jsx":"7ed59bd2ba96","components/forms/Select.jsx":"7022a4707cd2","components/forms/TextField.jsx":"28e6c2ef100f","components/forms/Toggle.jsx":"f677b4b8e081","components/pipeline/StageStep.jsx":"6e62f06682e1","components/pipeline/Terminal.jsx":"8cbd80b7c20e","components/pipeline/VramMeter.jsx":"33dcc79d97a8","ui_kits/diane-app/App.jsx":"75cfb25d98a9","ui_kits/diane-app/icons.jsx":"383ab3884358","ui_kits/diane-app/parts.jsx":"f0dafe9211fb"},"inlinedExternals":[],"unexposedExports":[]} */
+/* @ds-bundle: {"format":3,"namespace":"DianeDesignSystem_fdee8c","components":[{"name":"Badge","sourcePath":"components/core/Badge.jsx"},{"name":"Button","sourcePath":"components/core/Button.jsx"},{"name":"Card","sourcePath":"components/core/Card.jsx"},{"name":"RadioCards","sourcePath":"components/forms/RadioCards.jsx"},{"name":"SegmentedControl","sourcePath":"components/forms/SegmentedControl.jsx"},{"name":"Select","sourcePath":"components/forms/Select.jsx"},{"name":"TextField","sourcePath":"components/forms/TextField.jsx"},{"name":"Toggle","sourcePath":"components/forms/Toggle.jsx"},{"name":"StageStep","sourcePath":"components/pipeline/StageStep.jsx"},{"name":"Terminal","sourcePath":"components/pipeline/Terminal.jsx"},{"name":"VramMeter","sourcePath":"components/pipeline/VramMeter.jsx"}],"sourceHashes":{"assets/diane-ui.preview.js":"31187e26f74e","components/core/Badge.jsx":"0b2efd2fcaee","components/core/Button.jsx":"773aacb681b7","components/core/Card.jsx":"c201fb487615","components/forms/RadioCards.jsx":"7b998c6d469c","components/forms/SegmentedControl.jsx":"7ed59bd2ba96","components/forms/Select.jsx":"7022a4707cd2","components/forms/TextField.jsx":"28e6c2ef100f","components/forms/Toggle.jsx":"f677b4b8e081","components/pipeline/StageStep.jsx":"6e62f06682e1","components/pipeline/Terminal.jsx":"8cbd80b7c20e","components/pipeline/VramMeter.jsx":"33dcc79d97a8","ui_kits/diane-app/App.jsx":"94d3a6434049","ui_kits/diane-app/icons.jsx":"383ab3884358","ui_kits/diane-app/parts.jsx":"c8d52db4fa45"},"inlinedExternals":[],"unexposedExports":[]} */
 
 (() => {
 
@@ -2271,6 +2271,8 @@ function App() {
   const [apiKey, setApiKey] = React.useState('');
   const [template, setTemplate] = React.useState('YouTube Tech/AI');
   const [instructions, setInstructions] = React.useState(TEMPLATES['YouTube Tech/AI']);
+  const [inputTab, setInputTab] = React.useState('file'); // file | url
+  const [url, setUrl] = React.useState('');
   const [stages, setStages] = React.useState([]);
   const [logs, setLogs] = React.useState([]);
   const [vram, setVram] = React.useState(IDLE_VRAM);
@@ -2303,6 +2305,18 @@ function App() {
     setLogs([]);
     setVram(IDLE_VRAM);
     setElapsed(0);
+  };
+  const fetchUrl = () => {
+    if (!url.trim()) return;
+    const m = url.match(/(?:v=|youtu\.be\/|shorts\/)([\w-]{4,})/);
+    setFile({
+      name: `youtube_${m ? m[1] : 'video'}.mp4`,
+      res: '1080p',
+      dur: '12:48',
+      size: '~',
+      source: 'url'
+    });
+    if (phase === 'done') reset();
   };
   const start = () => {
     clearAll();
@@ -2400,13 +2414,34 @@ function App() {
     }
   }, /*#__PURE__*/React.createElement(Card, {
     title: "01 \xB7 ENTRADA"
-  }, /*#__PURE__*/React.createElement(UploadDropzone, {
-    file: file,
+  }, /*#__PURE__*/React.createElement(SegmentedControl, {
+    block: true,
+    value: inputTab,
+    onChange: setInputTab,
+    options: [{
+      value: 'file',
+      label: 'Subir archivo'
+    }, {
+      value: 'url',
+      label: 'URL de YouTube'
+    }]
+  }), /*#__PURE__*/React.createElement("div", {
+    style: {
+      marginTop: 'var(--space-4)'
+    }
+  }, inputTab === 'file' ? /*#__PURE__*/React.createElement(UploadDropzone, {
+    file: file && file.source !== 'url' ? file : null,
     onPick: f => {
       setFile(f);
       if (phase === 'done') reset();
     }
-  })), /*#__PURE__*/React.createElement(Card, {
+  }) : /*#__PURE__*/React.createElement(YoutubeInput, {
+    file: file,
+    url: url,
+    setUrl: setUrl,
+    onFetch: fetchUrl,
+    onClear: () => setFile(null)
+  }))), /*#__PURE__*/React.createElement(Card, {
     title: "02 \xB7 PRESET"
   }, /*#__PURE__*/React.createElement(SegmentedControl, {
     block: true,
@@ -2588,6 +2623,98 @@ function App() {
       msg: 'esperando — el orquestador no carga modelos; cada etapa corre como subproceso aislado.'
     }]
   }))))));
+}
+function YoutubeInput({
+  file,
+  url,
+  setUrl,
+  onFetch,
+  onClear
+}) {
+  const fetched = file && file.source === 'url';
+  if (fetched) {
+    return /*#__PURE__*/React.createElement("button", {
+      type: "button",
+      onClick: onClear,
+      style: {
+        width: '100%',
+        textAlign: 'left',
+        cursor: 'pointer',
+        display: 'flex',
+        alignItems: 'center',
+        gap: 'var(--space-4)',
+        padding: '14px 16px',
+        background: 'var(--green-deep)',
+        border: '1px solid var(--green-dim)',
+        borderRadius: 'var(--radius-md)'
+      }
+    }, /*#__PURE__*/React.createElement("span", {
+      style: {
+        color: 'var(--green)',
+        display: 'grid',
+        placeItems: 'center'
+      }
+    }, /*#__PURE__*/React.createElement(IconFilm, {
+      size: 26
+    })), /*#__PURE__*/React.createElement("span", {
+      style: {
+        display: 'flex',
+        flexDirection: 'column',
+        gap: 3,
+        minWidth: 0
+      }
+    }, /*#__PURE__*/React.createElement("span", {
+      style: {
+        fontFamily: 'var(--font-mono)',
+        fontSize: 13,
+        color: 'var(--green-bright)'
+      }
+    }, file.name), /*#__PURE__*/React.createElement("span", {
+      style: {
+        fontFamily: 'var(--font-mono)',
+        fontSize: 11,
+        color: 'var(--text-muted)'
+      }
+    }, "YouTube \xB7 ", file.res, " \xB7 ", file.dur, " \u2014 clic para quitar")));
+  }
+  return /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: 'flex',
+      gap: 'var(--space-2)',
+      alignItems: 'stretch'
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      flex: 1,
+      minWidth: 0
+    }
+  }, /*#__PURE__*/React.createElement(TextField, {
+    value: url,
+    onChange: setUrl,
+    placeholder: "https://www.youtube.com/watch?v=\u2026",
+    prefix: /*#__PURE__*/React.createElement("span", {
+      style: {
+        display: 'grid',
+        placeItems: 'center',
+        width: 19,
+        height: 14,
+        borderRadius: 3,
+        background: 'var(--red)',
+        color: '#0c1213'
+      }
+    }, /*#__PURE__*/React.createElement(IconPlay, {
+      size: 9
+    }))
+  })), /*#__PURE__*/React.createElement(Button, {
+    variant: "primary",
+    size: "md",
+    disabled: !url.trim(),
+    onClick: onFetch,
+    "aria-label": "Obtener video",
+    leadingIcon: /*#__PURE__*/React.createElement(IconDownload, {
+      size: 16
+    })
+  }));
 }
 function EmptyRun({
   file
@@ -3055,7 +3182,8 @@ function UploadDropzone({
       name: 'jobs_keynote_2024.mp4',
       size: '184 MB',
       dur: '12:48',
-      res: '1920×1080'
+      res: '1920×1080',
+      source: 'upload'
     }),
     style: {
       width: '100%',

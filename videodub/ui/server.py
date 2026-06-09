@@ -14,13 +14,14 @@ from __future__ import annotations
 import json
 import os
 import queue
+import re
 import threading
 import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
 
 import yaml
-from fastapi import FastAPI, Form, HTTPException, UploadFile
+from fastapi import Body, FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
@@ -72,9 +73,59 @@ def vram_info() -> dict:
     return {"available": True, "used_mib": snap.used_mib, "total_mib": snap.total_mib}
 
 
+_YOUTUBE_RE = re.compile(
+    r"^https?://(www\.)?(youtube\.com/(watch\?|shorts/)|youtu\.be/)", re.I
+)
+
+
+@app.post("/api/download-url")
+def download_url(payload: dict = Body(...)) -> dict:
+    """Descarga un video de YouTube con yt-dlp a workspace/uploads/.
+
+    Devuelve un ``file_id`` que POST /api/jobs acepta en lugar del upload —
+    el video descargado entra al pipeline igual que un archivo subido.
+    """
+    url = str(payload.get("url", "")).strip()
+    if not _YOUTUBE_RE.match(url):
+        raise HTTPException(400, "URL de YouTube inválida")
+
+    import yt_dlp
+
+    upload_id = uuid.uuid4().hex[:12]
+    uploads = WORKSPACE / "uploads"
+    uploads.mkdir(parents=True, exist_ok=True)
+    outpath = uploads / f"{upload_id}.mp4"
+
+    opts = {
+        "outtmpl": str(uploads / f"{upload_id}.%(ext)s"),
+        # H.264 mp4 para mantener -c:v copy en compose.
+        "format": "bv*[ext=mp4]+ba[ext=m4a]/b[ext=mp4]/b",
+        "merge_output_format": "mp4",
+        "noplaylist": True,
+        "quiet": True,
+        "no_warnings": True,
+    }
+    try:
+        with yt_dlp.YoutubeDL(opts) as ydl:
+            info = ydl.extract_info(url, download=True)
+    except yt_dlp.utils.DownloadError as exc:
+        raise HTTPException(502, f"yt-dlp falló: {str(exc)[-300:]}")
+    if not outpath.exists():
+        raise HTTPException(502, "yt-dlp no produjo el MP4 esperado")
+
+    return {
+        "file_id": upload_id,
+        "name": f"{info.get('title', 'video')}.mp4",
+        "duration_s": info.get("duration"),
+        "resolution": f"{info.get('width', '?')}×{info.get('height', '?')}",
+        "size_bytes": outpath.stat().st_size,
+    }
+
+
 @app.post("/api/jobs")
 async def create_job(
-    file: UploadFile,
+    file: UploadFile | None = File(None),
+    file_id: str = Form(""),
     preset: str = Form("balanced"),
     backend: str = Form("gemini"),
     instructions: str = Form(""),
@@ -88,13 +139,24 @@ async def create_job(
     if backend == "gemini" and not (api_key or os.environ.get("GEMINI_API_KEY")):
         raise HTTPException(400, "GEMINI_API_KEY no configurada (entorno o campo de la UI)")
 
-    upload_id = uuid.uuid4().hex[:12]
     uploads = WORKSPACE / "uploads"
     uploads.mkdir(parents=True, exist_ok=True)
-    video_path = uploads / f"{upload_id}.mp4"
-    with video_path.open("wb") as fh:
-        while chunk := await file.read(1 << 20):
-            fh.write(chunk)
+    if file_id:
+        # Video ya descargado por /api/download-url.
+        if not re.fullmatch(r"[0-9a-f]{12}", file_id):
+            raise HTTPException(400, "file_id inválido")
+        upload_id = file_id
+        video_path = uploads / f"{file_id}.mp4"
+        if not video_path.exists():
+            raise HTTPException(404, f"file_id {file_id} no existe")
+    elif file is not None:
+        upload_id = uuid.uuid4().hex[:12]
+        video_path = uploads / f"{upload_id}.mp4"
+        with video_path.open("wb") as fh:
+            while chunk := await file.read(1 << 20):
+                fh.write(chunk)
+    else:
+        raise HTTPException(400, "falta el video: envía 'file' o 'file_id'")
 
     # Config por job: global + overrides de la UI (sin tocar pipeline.yaml).
     config = yaml.safe_load(GLOBAL_CONFIG.read_text()) if GLOBAL_CONFIG.exists() else {}
