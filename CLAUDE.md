@@ -76,7 +76,8 @@ morir el proceso.
 | Audio extract | FFmpeg (apt) | CPU |
 | Source separation | `demucs` v4 (htdemucs_ft) | ~3 GB VRAM |
 | ASR | `whisperx` con `large-v3` | ~6 GB VRAM, word-level timestamps |
-| LLM serving | `llama.cpp` (server CUDA build) | Flash Attention + offload GPU+CPU |
+| Traducción (cloud) | `gemini-srt-translator` (PyPI) | Backend Gemini API; usa API key gratuita de Google AI Studio |
+| LLM serving | `llama.cpp` (server CUDA build) | Flash Attention + offload GPU+CPU; backend local de traducción |
 | LLM modelo | **Qwen3.6 35B A3B GGUF IQ4_XS** (bartowski) | MoE: 35B total, ~3.6B activos; 18.35 GB; `-ngl 24` (13.5 GB VRAM + resto en RAM) |
 | TTS | Fish Speech S2 Pro | BF16 por default (~10 GB VRAM); NF4 como fallback |
 | Time-stretch | `rubberband-cli` (apt) | Ajuste de tempo sin cambiar pitch |
@@ -274,6 +275,8 @@ correctamente entre subprocesos.
 >     source_language: "en"
 >     target_language: "es"
 >     default_preset: "balanced"
+>     translation_backend: "gemini"  # "gemini" o "local"
+>     translation_description: "YouTube tech/AI speech. Rules: 1) Informal Latin American Spanish, never Spain Spanish. 2) Convert ALL numbers to words (17=diecisiete, 2005=dos mil cinco). 3) Write English proper nouns phonetically in Spanish (Apple=Ápol, Stanford=Stánford, Steve=Stív, Jobs=Yobs, iOS=ai-o-és). 4) Keep each subtitle SHORT and CONCISE, Spanish must not exceed original English duration. 5) Never translate proper names, write them phonetically instead."
 >     ```
 >
 > NO instales aún PyTorch ni librerías pesadas globalmente. El dummy
@@ -329,63 +332,89 @@ correctamente entre subprocesos.
 
 ---
 
-### MILESTONE 3 — Servidor LLM + traducción contextual
+### MILESTONE 3 — Traducción dual: Gemini API + local Qwen
 
-**Objetivo:** traducir SRT en inglés a español manteniendo coherencia
-narrativa entre líneas (no traducir línea por línea aisladamente).
+**Objetivo:** traducir SRT en inglés a español con dos backends
+intercambiables: Gemini API (gratis, online) y Qwen local (offline).
+El backend se configura en `pipeline.yaml` y se selecciona desde la UI.
 
 **Prompt para Claude Code:**
 
 > Lee CLAUDE.md. Implementa el Milestone 3.
 >
-> 1. `scripts/download_models.sh`: descarga Qwen3.6 35B A3B IQ4_XS de
->    bartowski desde HuggingFace a `models/llm/`. Verifica checksum.
+> ### Backend Gemini (translation_backend: "gemini")
+>
+> 1. Instalar `gemini-srt-translator` como dependencia en `pyproject.toml`.
+> 2. `videodub/stages/translate.py` — rama Gemini:
+>    - Lee `translation_backend` y `translation_description` de `pipeline.yaml`.
+>    - Si backend es "gemini", usa la Python API de gemini-srt-translator:
+>      ```python
+>      import gemini_srt_translator as gst
+>      gst.gemini_api_key = os.environ["GEMINI_API_KEY"]
+>      gst.input_file = "03_transcript.srt"
+>      gst.output_file = "04_translation.srt"
+>      gst.target_language = "Latin American Spanish"
+>      gst.model_name = "gemini-2.5-flash"
+>      gst.description = config.translation_description
+>      gst.free_quota = True   # respetar límites del tier gratuito
+>      gst.thinking = True
+>      gst.progress_log = True
+>      gst.translate()
+>      ```
+>    - Después de traducir, parsear el SRT output y generar también
+>      `04_translation.json` con el schema `Translation` pydantic.
+>    - Si `GEMINI_API_KEY` no está en el entorno, lanzar error claro:
+>      "GEMINI_API_KEY no configurada. Agrega tu clave en ~/.bashrc o
+>       usa translation_backend: local en pipeline.yaml"
+>
+> ### Backend local (translation_backend: "local")
+>
+> 3. `scripts/download_models.sh`: descarga Qwen3.6 35B A3B IQ4_XS de
+>    bartowski desde HuggingFace a `models/llm/`.
 >    Repo: `bartowski/Qwen3.6-35B-A3B-GGUF`, archivo IQ4_XS (~18.35 GB).
-> 2. `videodub/services/llamacpp_server.py`: clase `LlamaCppServer` que:
+> 4. `videodub/services/llamacpp_server.py`: clase `LlamaCppServer` que:
 >    - Arranca llama-server como subprocess con args optimizados para
 >      4070 Ti SUPER con offloading GPU+CPU.
 >    - Flags clave: `-fa on`, `-ctk q8_0 -ctv q8_0`, `-ngl 24`
 >      (24 capas en GPU ≈ 13.5 GB VRAM, resto en CPU/RAM),
 >      `--threads 8` (solo P-cores), `--mlock`, `-c 16384`.
->    - El modelo es MoE (Mixture of Experts): respetar
->      `--override-kv tokenizer.ggml.add_bos_token=bool:false`
->      si llama.cpp lo requiere para Qwen3.
 >    - Espera health check en `http://127.0.0.1:8080/health`.
->    - Timeout de arranque: mínimo 45s (modelo grande + offload inicial).
+>    - Timeout de arranque: mínimo 45s (modelo MoE + offload inicial).
 >    - Método `stop()` mata el proceso y verifica liberación de VRAM.
 >    - Context manager: `with LlamaCppServer(...) as srv: ...`.
-> 3. `videodub/stages/translate.py`:
->    - Recibe `transcript.json` (Transcript pydantic).
+> 5. `videodub/stages/translate.py` — rama local:
+>    - Si backend es "local", arranca LlamaCppServer.
 >    - Implementa **ventana deslizante de contexto**: para cada segmento
->      a traducir, incluye en el prompt los N segmentos previos (default 8)
->      ya traducidos como contexto.
->    - Prompt system: "Eres un traductor profesional especializado en
->      doblaje de video del inglés al español neutro latinoamericano. Tu
->      prioridad es la naturalidad y el contexto, no la traducción literal.
->      Mantén la longitud aproximada del original para sincronización."
->    - Output: SRT + JSON con `Translation` schema (similar a Transcript).
->    - Esta etapa es subprocess que arranca el server, hace HTTP requests,
->      mata el server al terminar.
-> 4. `scripts/benchmark_translate.py`: traduce un SRT de prueba con el
->    modelo configurado y guarda resultados para evaluación manual.
-> 5. Tests: traducir un SRT pequeño y verificar que el output es JSON
->    válido con el schema correcto.
+>      incluye los N segmentos previos (default 8) como contexto.
+>    - System prompt base + `translation_description` de pipeline.yaml
+>      se combinan para guiar la traducción.
+>    - Output: SRT + JSON con schema `Translation`.
+>    - Mata el server al terminar.
 >
-> NOTAS:
+> ### Común a ambos backends
+>
+> 6. `videodub/schemas/translation.py`: schema pydantic `Translation`
+>    (lista de segmentos traducidos + metadata + backend_used).
+> 7. `scripts/benchmark_translate.py`: traduce un SRT de prueba con
+>    ambos backends y guarda resultados para comparación manual.
+> 8. Tests: traducir un SRT pequeño con cada backend y verificar
+>    que el output JSON es válido con el schema correcto.
+>    El test de backend local puede skip si no hay GPU/modelo descargado.
+>
+> NOTAS TÉCNICAS:
+> - gemini-srt-translator con `free_quota=True` añade delays automáticos
+>   para no superar los límites del tier gratuito. NO desactivar esto.
 > - llama.cpp debe compilarse con CUDA: `cmake -B build -DGGML_CUDA=ON`.
->    Considerar build script automatizado en `install.sh`.
-> - El server tarda 30-45s en arrancar con este modelo (MoE + offload).
->    Ajustar timeouts en consecuencia.
-> - **NUNCA** hacer requests concurrentes al server al inicio: usar
->    `--parallel 1` y respetarlo.
-> - Qwen3 puede requerir flags adicionales vs Qwen2.5; verificar
->    la model card de bartowski para argumentos recomendados.
+> - Qwen3 MoE puede requerir flags adicionales; revisar model card de
+>   bartowski para argumentos específicos de Qwen3.
+> - **NUNCA** hacer requests concurrentes al llama-server: `--parallel 1`.
 >
 > Criterios de aceptación:
-> - Traducción de un SRT de 1 minuto en inglés produce ES coherente,
->    contextualmente correcto, con tono natural.
-> - Server arranca y muere limpiamente, VRAM se libera completamente.
-> - Caché funciona: cambiar el modelo invalida caché, no cambiar nada lo usa.
+> - Backend Gemini: SRT de 1 min traducido correctamente usando API key.
+> - Backend local: SRT de 1 min traducido con Qwen, VRAM libera al terminar.
+> - Cambiar `translation_backend` en pipeline.yaml cambia el backend sin
+>   modificar código.
+> - Caché funciona: mismo input + misma config no re-traduce.
 
 ---
 
@@ -476,7 +505,8 @@ narrativa entre líneas (no traducir línea por línea aisladamente).
 
 ### MILESTONE 6 — UI Gradio
 
-**Objetivo:** interfaz web local para no tener que recordar comandos.
+**Objetivo:** interfaz web local con selector de backend de traducción
+y plantillas de instrucciones personalizables.
 
 **Prompt para Claude Code:**
 
@@ -484,19 +514,71 @@ narrativa entre líneas (no traducir línea por línea aisladamente).
 >
 > 1. `videodub/ui/gradio_app.py`:
 >    - Upload de video MP4.
->    - Selector de preset (fast / balanced / quality).
+>    - Selector de preset (fast / balanced / quality):
 >      - fast y balanced: pipeline sin lip sync (M1-M5).
 >      - quality: pipeline completo incluyendo lip sync (M1-M7).
+>    - **Selector de backend de traducción** (radio buttons):
+>      - "Gemini API (gratis, online)" — usa gemini-srt-translator
+>      - "Local (Qwen 35B, offline)" — usa llama.cpp
+>    - **Selector de plantilla de instrucciones** (dropdown):
+>      - "YouTube Tech/AI" (default) — instrucciones probadas para
+>        contenido técnico con reglas de fonética y números
+>      - "Entretenimiento" — tono más informal, menos reglas técnicas
+>      - "Documental" — tono neutro, más formal
+>      - "Personalizado" — campo libre editable
+>    - **Campo de texto editable** para las instrucciones de traducción,
+>      pre-llenado según la plantilla seleccionada. Editable en cualquier
+>      momento antes de iniciar.
+>    - Si backend es Gemini y `GEMINI_API_KEY` no está en el entorno:
+>      mostrar campo para ingresar la API key manualmente en la UI.
+>      Dejar claro que lo ideal es configurarla como variable de entorno.
 >    - Botón "Iniciar doblaje".
 >    - Logs en vivo (capturar stderr del orquestador y mostrar en UI).
->    - Progreso por etapa (visual: cajitas que se ponen verdes, una por stage).
+>    - Progreso por etapa (cajitas que se ponen verdes, una por stage).
 >    - Player de preview del resultado.
 >    - Botón de descarga.
 > 2. CLI: `python -m videodub ui` arranca Gradio en :7860.
-> 3. La UI se comunica con el orquestador, NO carga modelos.
+> 3. La UI escribe los valores seleccionados al config del job antes de
+>    lanzar el orquestador. NO modifica pipeline.yaml global.
+>
+> ### Plantillas de instrucciones predefinidas
+>
+> ```python
+> TRANSLATION_TEMPLATES = {
+>     "YouTube Tech/AI": (
+>         "YouTube tech/AI speech. Rules: "
+>         "1) Informal Latin American Spanish, never Spain Spanish. "
+>         "2) Convert ALL numbers to words (17=diecisiete, 2005=dos mil cinco). "
+>         "3) Write English proper nouns phonetically in Spanish "
+>         "(Apple=Ápol, Stanford=Stánford, Steve=Stív, Jobs=Yobs, iOS=ai-o-és). "
+>         "4) Keep each subtitle SHORT and CONCISE, Spanish must not exceed "
+>         "original English duration. "
+>         "5) Never translate proper names, write them phonetically instead."
+>     ),
+>     "Entretenimiento": (
+>         "Entertainment content. Rules: "
+>         "1) Casual, natural Latin American Spanish. "
+>         "2) Preserve humor and tone of the original. "
+>         "3) Keep subtitles concise and natural-sounding. "
+>         "4) Adapt idioms and expressions, don't translate literally."
+>     ),
+>     "Documental": (
+>         "Documentary content. Rules: "
+>         "1) Neutral, formal Latin American Spanish. "
+>         "2) Preserve technical terms when no good Spanish equivalent exists. "
+>         "3) Maintain the authoritative tone of the narrator. "
+>         "4) Accuracy over style."
+>     ),
+>     "Personalizado": "",
+> }
+> ```
 >
 > Criterios de aceptación:
 > - Flujo completo desde upload hasta video final funciona en la UI.
+> - Cambiar backend en la UI cambia qué stage de traducción se ejecuta.
+> - Plantillas se cargan correctamente en el campo editable.
+> - Campo de API key aparece solo cuando se selecciona Gemini y no hay
+>   variable de entorno configurada.
 > - Logs visibles en tiempo real.
 
 ---
@@ -602,6 +684,14 @@ huggingface-cli download Lightricks/LTX-2.3-22b-IC-LoRA-LipDub \
 - Si queda un zombie, el `StageRunner` debe matar el árbol con `psutil`.
 - Verifica que no haya un `llama-server` quedó corriendo en background.
 
+### GEMINI_API_KEY no encontrada
+
+- Obtener clave en https://aistudio.google.com/apikey (gratuito con cuenta Google).
+- Agregar a `~/.bashrc`: `export GEMINI_API_KEY="tu_clave_aqui"` y hacer `source ~/.bashrc`.
+- Verificar: `echo $GEMINI_API_KEY`.
+- Alternativamente ingresarla en el campo de la UI al seleccionar backend Gemini.
+- Si el error persiste con `free_quota=True`, esperar 1 minuto (límite de RPM del tier gratuito).
+
 ### WhisperX falla con audio corto
 
 - Mínimo ~3 segundos. Para tests más cortos, usar Whisper directo
@@ -645,5 +735,6 @@ huggingface-cli download Lightricks/LTX-2.3-22b-IC-LoRA-LipDub \
 
 *Última actualización: modelo LLM actualizado a Qwen3.6 35B A3B IQ4_XS (MoE,
 bartowski GGUF, offload -ngl 24, probado en hardware). Milestone 7 agregado:
-lip sync con LTX-2.3-22b-IC-LoRA-LipDub (Lightricks). Hardware Ada Lovelace,
-Ubuntu 26.04.*
+lip sync con LTX-2.3-22b-IC-LoRA-LipDub (Lightricks). Milestone 3 y 6
+actualizados: traducción dual (Gemini API + Qwen local), plantillas de
+instrucciones personalizables en UI. Hardware Ada Lovelace, Ubuntu 26.04.*

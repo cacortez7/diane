@@ -5,3 +5,5 @@ vram_gb: 16
 source_language: "en"
 target_language: "es"
 default_preset: "balanced"
+translation_backend: "gemini"
+translation_description: "YouTube tech/AI speech. Rules: 1) Informal Latin American Spanish, never Spain Spanish. 2) Convert ALL numbers to words (17=diecisiete, 2005=dos mil cinco). 3) Write English proper nouns phonetically in Spanish (Apple=Ápol, Stanford=Stánford, Steve=Stív, Jobs=Yobs, iOS=ai-o-és). 4) Keep each subtitle SHORT and CONCISE, Spanish must not exceed original English duration. 5) Never translate proper names, write them phonetically instead."
