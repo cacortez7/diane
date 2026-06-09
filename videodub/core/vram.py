@@ -100,6 +100,43 @@ def is_available() -> bool:
         return False
 
 
+@dataclass(frozen=True)
+class GpuProcess:
+    """Un proceso de cómputo activo en la GPU."""
+
+    pid: int
+    name: str
+    used_mib: int
+
+
+def get_compute_apps() -> list[GpuProcess]:
+    """Procesos de cómputo en GPU vía nvidia-smi --query-compute-apps."""
+    cmd = [
+        _nvidia_smi_path(),
+        "--query-compute-apps=pid,process_name,used_memory",
+        "--format=csv,noheader,nounits",
+    ]
+    try:
+        out = subprocess.run(
+            cmd, check=True, capture_output=True, text=True, timeout=15
+        ).stdout
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as exc:
+        raise NvidiaSmiUnavailable(f"nvidia-smi falló: {exc}") from exc
+
+    procs: list[GpuProcess] = []
+    for line in out.strip().splitlines():
+        if not line.strip():
+            continue
+        # process_name puede contener comas en teoría; pid y memoria no.
+        pid_s, rest = line.split(",", 1)
+        name, used_s = rest.rsplit(",", 1)
+        try:
+            procs.append(GpuProcess(int(pid_s), name.strip(), int(used_s)))
+        except ValueError:
+            continue
+    return procs
+
+
 def wait_for_vram_release(
     baseline_used_mib: int,
     *,
@@ -145,6 +182,8 @@ def wait_for_vram_release(
 __all__ = [
     "NvidiaSmiUnavailable",
     "VramSnapshot",
+    "GpuProcess",
+    "get_compute_apps",
     "snapshot",
     "get_vram_used",
     "get_vram_free",
