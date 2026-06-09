@@ -10,6 +10,21 @@ especificación completa, la arquitectura y los milestones.
 
 ## Estado
 
+**Milestone 3 — Traducción dual backend.** La etapa `translate` convierte el
+SRT en inglés a español latinoamericano con dos backends intercambiables vía
+`translation_backend` en `config/pipeline.yaml`:
+
+- `gemini` — [gemini-srt-translator](https://pypi.org/project/gemini-srt-translator/)
+  con el tier gratuito de Google AI Studio (requiere `GEMINI_API_KEY` en el
+  entorno).
+- `local` — Qwen3.6 35B A3B (GGUF IQ4_XS) servido por llama.cpp 100% offline
+  (requiere compilar `llama-server` con CUDA y `scripts/download_models.sh`).
+
+```bash
+uv run python -m videodub run --input video.mp4 --stage translate
+uv run python scripts/benchmark_translate.py --input-srt ... --input-json ...
+```
+
 **Milestone 2 — Pipeline de audio.** Sobre la base de M1 (logging rich,
 monitor de VRAM, `StageRunner`), el orquestador convierte un MP4 en un SRT en
 inglés: extracción de audio (FFmpeg) → separación de voz (Demucs htdemucs_ft)

@@ -435,6 +435,34 @@ El backend se configura en `pipeline.yaml` y se selecciona desde la UI.
 >   modificar código.
 > - Caché funciona: mismo input + misma config no re-traduce.
 
+**Estado: COMPLETADO** — ambos backends validados con tests reales en el
+hardware objetivo. Decisiones tomadas:
+
+- `stages/translate.py` corre en el **entorno del proyecto** (`uv run
+  python`), no PEP 723: sus deps son livianas (sin torch) y necesita
+  importar `videodub` (schemas + `LlamaCppServer`). El orquestador tiene
+  un `project_runner` para estas etapas (`StageSpec.project_env=True`).
+- La etapa acepta `--backend gemini|local` como override del YAML (lo usa
+  `scripts/benchmark_translate.py` y la UI en M6).
+- Rama Gemini: gemini-srt-translator escribe el SRT; los timestamps del
+  JSON `Translation` se toman del transcript original (la traducción
+  conserva 1:1 los segmentos).
+- Rama local: ventana deslizante = pares user/assistant previos (default
+  8, `translation_context_window` en YAML) en el chat template;
+  `temperature=0.3`. Modelo: primer `*.gguf` en `models/llm/` o
+  `local_llm_path` del YAML.
+- Repo HF correcto del modelo: **`bartowski/Qwen_Qwen3.6-35B-A3B-GGUF`**
+  (bartowski prefija la org; `bartowski/Qwen3.6-35B-A3B-GGUF` no existe).
+- Qwen3.6 es **modelo razonador**: sin
+  `"chat_template_kwargs": {"enable_thinking": false}` en el request, la
+  respuesta se va al canal de thinking y `content` llega vacío. Se
+  desactiva el thinking y además se limpia cualquier resto `<think>…</think>`.
+- llama.cpp compilado con CUDA en `~/src/llama.cpp` (build `d73cd07`),
+  binario en `~/.local/bin/llama-server`. Modelo (19 GB) en
+  `models/llm/Qwen_Qwen3.6-35B-A3B-IQ4_XS.gguf`.
+- Los tests de ambos backends hacen **skip** automático si faltan la API
+  key, el binario o el modelo.
+
 ---
 
 ### MILESTONE 4 — Síntesis con Fish S2 Pro
