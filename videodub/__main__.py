@@ -54,5 +54,22 @@ def dummy(
     logger.info("resumen: %s", result.summary())
 
 
+@app.command()
+def run(
+    input: Path = typer.Option(..., "--input", help="video MP4 de entrada"),
+    stage: str = typer.Option(
+        "transcribe", "--stage", help="última etapa a ejecutar (extract_audio|separate_vocals|transcribe)"
+    ),
+    workspace: Path = typer.Option(Path("workspace"), help="raíz del workspace"),
+) -> None:
+    """Corre el pipeline hasta la etapa indicada (Milestone 2)."""
+    setup_logging()
+    from videodub.core.orchestrator import Orchestrator
+
+    orch = Orchestrator(workspace_root=workspace)
+    job_dir = orch.run(input, until_stage=stage)
+    logger.info("[bold green]listo[/bold green] — outputs en %s", job_dir)
+
+
 if __name__ == "__main__":
     app()

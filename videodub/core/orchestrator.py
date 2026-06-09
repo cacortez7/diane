@@ -1,0 +1,177 @@
+"""Orquestador del pipeline (sin GPU, sin modelos — sección 3 de CLAUDE.md).
+
+Coordina las etapas como subprocesos aislados vía StageRunner, con caché por
+hash de inputs + config. Milestone 2: extract_audio → separate_vocals →
+transcribe.
+"""
+
+from __future__ import annotations
+
+import hashlib
+import json
+import shutil
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Callable
+
+import yaml
+from pydantic import ValidationError
+
+from videodub.core.cache import StageCache, hash_inputs
+from videodub.core.logger import get_logger
+from videodub.core.runner import StageError, StageRunner
+from videodub.schemas.segment import Transcript
+
+logger = get_logger(__name__)
+
+STAGES_DIR = Path(__file__).parent.parent / "stages"
+
+
+@dataclass(frozen=True)
+class StageSpec:
+    """Definición declarativa de una etapa del pipeline."""
+
+    name: str
+    script: Path
+    inputs: Callable[[Path], list[Path]]   # job_dir -> archivos de input
+    outputs: Callable[[Path], list[Path]]  # job_dir -> archivos de output
+    args: Callable[[Path], list[str]]      # job_dir -> argv para el script
+    timeout_s: float = 1800.0
+
+
+def _pipeline_stages() -> list[StageSpec]:
+    return [
+        StageSpec(
+            name="extract_audio",
+            script=STAGES_DIR / "extract_audio.py",
+            inputs=lambda d: [d / "00_source.mp4"],
+            outputs=lambda d: [d / "01_audio.wav"],
+            args=lambda d: [
+                "--input", str(d / "00_source.mp4"),
+                "--output", str(d / "01_audio.wav"),
+            ],
+            timeout_s=300.0,
+        ),
+        StageSpec(
+            name="separate_vocals",
+            script=STAGES_DIR / "separate_vocals.py",
+            inputs=lambda d: [d / "01_audio.wav"],
+            outputs=lambda d: [d / "02_vocals.wav", d / "02_instrumental.wav"],
+            args=lambda d: [
+                "--input", str(d / "01_audio.wav"),
+                "--vocals", str(d / "02_vocals.wav"),
+                "--instrumental", str(d / "02_instrumental.wav"),
+            ],
+        ),
+        StageSpec(
+            name="transcribe",
+            script=STAGES_DIR / "transcribe.py",
+            inputs=lambda d: [d / "02_vocals.wav"],
+            outputs=lambda d: [d / "03_transcript.srt", d / "03_transcript.json"],
+            args=lambda d: [
+                "--input", str(d / "02_vocals.wav"),
+                "--srt", str(d / "03_transcript.srt"),
+                "--json", str(d / "03_transcript.json"),
+            ],
+        ),
+    ]
+
+
+class Orchestrator:
+    """Ejecuta el pipeline etapa por etapa con caché y verificación de VRAM."""
+
+    def __init__(
+        self,
+        workspace_root: Path = Path("workspace"),
+        config_path: Path = Path("config/pipeline.yaml"),
+        runner: StageRunner | None = None,
+    ):
+        self.workspace_root = workspace_root
+        self.config = yaml.safe_load(config_path.read_text()) if config_path.exists() else {}
+        # Las etapas son scripts PEP 723: uv crea un entorno efímero por etapa.
+        self.runner = runner or StageRunner(uv_command=["uv", "run", "--script"])
+
+    def job_id_for(self, input_video: Path) -> str:
+        """ID de job determinista: hash del contenido del video."""
+        h = hashlib.sha256(input_video.read_bytes()).hexdigest()[:16]
+        return h
+
+    def run(self, input_video: Path, until_stage: str | None = None) -> Path:
+        """Corre el pipeline para un video. Devuelve el dir del job.
+
+        ``until_stage`` permite cortar el pipeline (ej. "transcribe").
+        """
+        input_video = input_video.resolve()
+        if not input_video.exists():
+            raise FileNotFoundError(input_video)
+
+        job_id = self.job_id_for(input_video)
+        job_dir = self.workspace_root / job_id
+        job_dir.mkdir(parents=True, exist_ok=True)
+        logger.info("[bold]job %s[/bold] → %s", job_id, job_dir)
+
+        source = job_dir / "00_source.mp4"
+        if not source.exists():
+            shutil.copy2(input_video, source)
+
+        cache = StageCache(job_dir)
+        stages = _pipeline_stages()
+
+        for spec in stages:
+            stage_config = self._config_subset(spec.name)
+            input_hash = hash_inputs(spec.inputs(job_dir), stage_config)
+            outputs = spec.outputs(job_dir)
+
+            if cache.is_fresh(spec.name, input_hash, outputs):
+                if spec.name == until_stage:
+                    break
+                continue
+
+            result = self.runner.run(
+                spec.script, spec.args(job_dir), timeout_s=spec.timeout_s
+            )
+            if not result.ok:
+                raise StageError(
+                    f"Etapa {spec.name} falló (rc={result.returncode}, "
+                    f"timeout={result.timed_out}).\nstderr:\n{result.stderr[-3000:]}"
+                )
+            missing = [p for p in outputs if not p.exists()]
+            if missing:
+                raise StageError(f"Etapa {spec.name} no produjo: {missing}")
+
+            if spec.name == "transcribe":
+                self._validate_transcript(job_dir / "03_transcript.json")
+
+            cache.store(spec.name, input_hash, outputs)
+            logger.info("etapa %s completada: %s", spec.name, result.summary())
+
+            if spec.name == until_stage:
+                break
+
+        return job_dir
+
+    def _config_subset(self, stage: str) -> dict:
+        """Subconjunto de config que afecta a una etapa (para el hash)."""
+        keys = {
+            "extract_audio": [],
+            "separate_vocals": [],
+            "transcribe": ["source_language"],
+        }.get(stage, [])
+        return {"stage": stage, **{k: self.config.get(k) for k in keys}}
+
+    @staticmethod
+    def _validate_transcript(json_path: Path) -> Transcript:
+        """Valida el JSON de la etapa contra el schema pydantic."""
+        try:
+            transcript = Transcript.model_validate_json(json_path.read_text())
+        except ValidationError as exc:
+            raise StageError(f"03_transcript.json no valida contra Transcript:\n{exc}")
+        logger.info(
+            "transcript válido: %d segmentos, idioma=%s",
+            len(transcript.segments),
+            transcript.language,
+        )
+        return transcript
+
+
+__all__ = ["Orchestrator", "StageSpec"]

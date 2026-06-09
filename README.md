@@ -10,9 +10,19 @@ especificación completa, la arquitectura y los milestones.
 
 ## Estado
 
-**Milestone 1 — Andamiaje y subprocess runner.** Infraestructura base:
-logging con rich, monitor de VRAM vía `nvidia-smi`, y el `StageRunner` que
-lanza etapas como subprocesos aislados verificando la liberación de VRAM.
+**Milestone 2 — Pipeline de audio.** Sobre la base de M1 (logging rich,
+monitor de VRAM, `StageRunner`), el orquestador convierte un MP4 en un SRT en
+inglés: extracción de audio (FFmpeg) → separación de voz (Demucs htdemucs_ft)
+→ transcripción con word-level timestamps (WhisperX large-v3). Caché por hash
+de inputs + config: re-ejecutar el mismo video no re-corre etapas.
+
+```bash
+uv run python -m videodub run --input video.mp4 --stage transcribe
+```
+
+Outputs en `workspace/<job_id>/` (`01_audio.wav`, `02_vocals.wav`,
+`02_instrumental.wav`, `03_transcript.srt`, `03_transcript.json`).
+Requiere `ffmpeg` en PATH (apt o binario estático).
 
 ## Requisitos
 

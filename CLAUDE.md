@@ -330,6 +330,25 @@ correctamente entre subprocesos.
 > - Cada etapa libera VRAM al terminar (verificable en logs).
 > - Re-ejecutar el mismo input usa caché y NO re-corre etapas.
 
+**Estado: COMPLETADO.** Decisiones tomadas durante la implementación:
+
+- Aislamiento de entornos por etapa: metadata inline **PEP 723** en cada
+  script de stage + `uv run --script` (mismo patrón que el dummy de M1).
+  uv cachea el entorno por hash de dependencias, así que solo la primera
+  ejecución descarga torch/whisperx.
+- `separate_vocals.py` fija **torch/torchaudio <2.9**: torchaudio 2.9
+  eliminó los backends de I/O (sox/ffmpeg) y exige torchcodec.
+- `transcribe.py` depende de `nvidia-cudnn-cu12` y precarga las `.so` de
+  cuDNN vía ctypes antes de importar whisperx (ctranslate2 las necesita y
+  el wheel pip no está en LD_LIBRARY_PATH). Ojo: `nvidia.cudnn` es
+  namespace package — usar `__path__`, no `__file__`.
+- Las etapas NO importan el paquete `videodub` (corren en entornos
+  efímeros): emiten JSON plano y el **orquestador** valida contra el
+  schema pydantic (`Transcript`).
+- Fixture `tests/fixtures/sample_10s.mp4` generado con gTTS + ffmpeg
+  (tono 220 Hz de fondo); regenerable con `scripts/make_fixture.sh`.
+- `job_id` = sha256 del contenido del video (16 hex chars).
+
 ---
 
 ### MILESTONE 3 — Traducción dual: Gemini API + local Qwen
