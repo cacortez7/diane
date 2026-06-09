@@ -126,11 +126,19 @@ def translate_local(transcript: Transcript, config: dict) -> Translation:
 
             resp = requests.post(
                 url,
-                json={"messages": messages, "temperature": 0.3, "max_tokens": 256},
+                json={
+                    "messages": messages,
+                    "temperature": 0.3,
+                    "max_tokens": 512,
+                    # Qwen3.x es modelo razonador: sin esto, la respuesta se
+                    # va al canal de thinking y "content" llega vacío.
+                    "chat_template_kwargs": {"enable_thinking": False},
+                },
                 timeout=300,
             )
             resp.raise_for_status()
-            text = resp.json()["choices"][0]["message"]["content"].strip()
+            text = resp.json()["choices"][0]["message"]["content"]
+            text = re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL).strip()
             segments.append(
                 TranslatedSegment(
                     start=seg.start, end=seg.end, source_text=seg.text, text=text

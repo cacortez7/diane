@@ -435,8 +435,8 @@ El backend se configura en `pipeline.yaml` y se selecciona desde la UI.
 >   modificar código.
 > - Caché funciona: mismo input + misma config no re-traduce.
 
-**Estado: IMPLEMENTADO** (código completo; validación con backends reales
-pendiente de credenciales/binario). Decisiones tomadas:
+**Estado: COMPLETADO** — ambos backends validados con tests reales en el
+hardware objetivo. Decisiones tomadas:
 
 - `stages/translate.py` corre en el **entorno del proyecto** (`uv run
   python`), no PEP 723: sus deps son livianas (sin torch) y necesita
@@ -451,12 +451,17 @@ pendiente de credenciales/binario). Decisiones tomadas:
   8, `translation_context_window` en YAML) en el chat template;
   `temperature=0.3`. Modelo: primer `*.gguf` en `models/llm/` o
   `local_llm_path` del YAML.
-- Pendiente en esta máquina: `GEMINI_API_KEY` no configurada, y no hay
-  compilador/llama-server instalado (requiere
-  `sudo apt install build-essential cmake nvidia-cuda-toolkit` y compilar
-  llama.cpp con `-DGGML_CUDA=ON`). Los tests de ambos backends hacen
-  **skip** automático si faltan; al configurar la key / compilar el server
-  y bajar el modelo (`scripts/download_models.sh`), corren solos.
+- Repo HF correcto del modelo: **`bartowski/Qwen_Qwen3.6-35B-A3B-GGUF`**
+  (bartowski prefija la org; `bartowski/Qwen3.6-35B-A3B-GGUF` no existe).
+- Qwen3.6 es **modelo razonador**: sin
+  `"chat_template_kwargs": {"enable_thinking": false}` en el request, la
+  respuesta se va al canal de thinking y `content` llega vacío. Se
+  desactiva el thinking y además se limpia cualquier resto `<think>…</think>`.
+- llama.cpp compilado con CUDA en `~/src/llama.cpp` (build `d73cd07`),
+  binario en `~/.local/bin/llama-server`. Modelo (19 GB) en
+  `models/llm/Qwen_Qwen3.6-35B-A3B-IQ4_XS.gguf`.
+- Los tests de ambos backends hacen **skip** automático si faltan la API
+  key, el binario o el modelo.
 
 ---
 
