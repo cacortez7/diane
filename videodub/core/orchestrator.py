@@ -10,12 +10,16 @@ from __future__ import annotations
 import hashlib
 import json
 import shutil
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
 
+import psutil
 import yaml
 from pydantic import ValidationError
+
+from videodub.core import vram
 
 from videodub.core.cache import StageCache, hash_inputs
 from videodub.core.logger import get_logger
@@ -41,6 +45,11 @@ class StageSpec:
     # True: corre en el entorno del proyecto (uv run python, puede importar
     # videodub). False: script PEP 723 con entorno uv efímero propio.
     project_env: bool = False
+    # VRAM libre mínima para arrancar (MiB). El orquestador espera/reintenta
+    # y mata procesos GPU huérfanos del pipeline antes de rendirse.
+    min_free_vram_mib: int | None = None
+    # Variables de entorno extra para el subproceso de la etapa.
+    extra_env: dict[str, str] | None = None
 
 
 def _pipeline_stages() -> list[StageSpec]:
@@ -103,6 +112,10 @@ def _pipeline_stages() -> list[StageSpec]:
                 "--outdir", str(d / "05_segments"),
             ],
             timeout_s=3600.0,
+            # Fish S2 Pro BF16: pesos 8.6 GB + codec 1.8 GB + KV ≈ 11 GB.
+            min_free_vram_mib=11264,
+            # Evita OOM por fragmentación del allocator de PyTorch.
+            extra_env={"PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True"},
         ),
         StageSpec(
             name="align_timing",
@@ -216,8 +229,14 @@ class Orchestrator:
                 stage_args += ["--max-speed", str(self.config["max_speed"])]
             elif spec.name == "compose" and self.config.get("instrumental_volume"):
                 stage_args += ["--instrumental-volume", str(self.config["instrumental_volume"])]
+            if spec.min_free_vram_mib and vram.is_available():
+                self._ensure_free_vram(spec.name, spec.min_free_vram_mib)
+
             runner = self.project_runner if spec.project_env else self.runner
-            result = runner.run(spec.script, stage_args, timeout_s=spec.timeout_s)
+            result = runner.run(
+                spec.script, stage_args, timeout_s=spec.timeout_s,
+                extra_env=spec.extra_env,
+            )
             if not result.ok:
                 self.on_event({
                     "type": "error", "stage": spec.name,
@@ -252,6 +271,84 @@ class Orchestrator:
 
         self.on_event({"type": "job_done", "job_id": job_id})
         return job_dir
+
+    # Patrones de procesos GPU que pertenecen al pipeline y pueden quedar
+    # huérfanos (un stage que no murió limpio, un llama-server colgado).
+    _STRAY_PATTERNS = ("llama-server", ".cache/uv/environments")
+
+    def _ensure_free_vram(
+        self,
+        stage: str,
+        min_free_mib: int,
+        *,
+        retries: int = 3,
+        wait_s: float = 10.0,
+    ) -> None:
+        """Bloquea hasta que haya VRAM libre suficiente para la etapa.
+
+        En cada intento mata procesos GPU huérfanos del pipeline (subprocesos
+        de etapas anteriores que no murieron, llama-server colgado). Si tras
+        ``retries`` reintentos no se libera, lanza StageError en vez de dejar
+        que la etapa muera por OOM a mitad de carga del modelo.
+        """
+        for attempt in range(1, retries + 1):
+            free = vram.get_vram_free()
+            if free >= min_free_mib:
+                if attempt > 1:
+                    logger.info(
+                        "[vram-guard] %s: %d MiB libres (>= %d) tras %d intento(s)",
+                        stage, free, min_free_mib, attempt,
+                    )
+                return
+
+            logger.warning(
+                "[vram-guard] %s necesita %d MiB libres, hay %d (intento %d/%d)",
+                stage, min_free_mib, free, attempt, retries,
+            )
+            self._kill_stray_gpu_processes()
+            if attempt < retries:
+                time.sleep(wait_s)
+
+        free = vram.get_vram_free()
+        if free < min_free_mib:
+            self.on_event({
+                "type": "error", "stage": stage,
+                "message": f"VRAM insuficiente: {free} MiB libres, "
+                           f"se requieren {min_free_mib} MiB",
+            })
+            raise StageError(
+                f"Etapa {stage}: VRAM insuficiente tras {retries} reintentos "
+                f"({free} MiB libres < {min_free_mib} MiB requeridos). "
+                "Revisa procesos GPU con nvidia-smi."
+            )
+
+    def _kill_stray_gpu_processes(self) -> None:
+        """Mata procesos GPU huérfanos que pertenecen al pipeline.
+
+        Solo toca procesos cuyo binario coincide con los patrones del
+        pipeline (llama-server, entornos uv efímeros de etapas); nunca
+        procesos ajenos (escritorio, otras apps CUDA).
+        """
+        try:
+            apps = vram.get_compute_apps()
+        except vram.NvidiaSmiUnavailable:
+            return
+        for app in apps:
+            if not any(p in app.name for p in self._STRAY_PATTERNS):
+                continue
+            try:
+                proc = psutil.Process(app.pid)
+                logger.warning(
+                    "[vram-guard] matando proceso GPU huérfano del pipeline: "
+                    "pid=%d %s (%d MiB)", app.pid, app.name, app.used_mib,
+                )
+                proc.terminate()
+                try:
+                    proc.wait(timeout=5)
+                except psutil.TimeoutExpired:
+                    proc.kill()
+            except (psutil.NoSuchProcess, psutil.AccessDenied):
+                continue
 
     def _config_subset(self, stage: str) -> dict:
         """Subconjunto de config que afecta a una etapa (para el hash)."""

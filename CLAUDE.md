@@ -807,6 +807,15 @@ huggingface-cli download Lightricks/LTX-2.3-22b-IC-LoRA-LipDub \
 - Confirma que el subprocess realmente murió: `ps aux | grep python`.
 - Si queda un zombie, el `StageRunner` debe matar el árbol con `psutil`.
 - Verifica que no haya un `llama-server` quedó corriendo en background.
+- Desde el fix de OOM en synthesize, el orquestador tiene un **vram-guard**:
+  las etapas con `min_free_vram_mib` (synthesize: 11264) verifican VRAM
+  libre antes de arrancar, matan procesos GPU huérfanos del pipeline
+  (`llama-server`, entornos uv de etapas) y reintentan 3 veces con 10 s de
+  pausa; si no se libera, fallan con error claro en vez de OOM a mitad de
+  carga. synthesize además corre con
+  `PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True`.
+  Causa raíz típica del OOM original: `wait_for_vram_release` solo
+  *loguea* si la VRAM no vuelve al baseline — no bloquea el pipeline.
 
 ### GEMINI_API_KEY no encontrada
 
