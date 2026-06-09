@@ -10,6 +10,16 @@ especificación completa, la arquitectura y los milestones.
 
 ## Estado
 
+**Milestone 5 — Alineación y composición final.** `align_timing` ajusta cada
+segmento sintetizado a su hueco original (rubberband, cap 1.25x, sin cambiar
+pitch) y los ensambla en `06_synth_aligned.wav`; `compose` mezcla voz (100%) +
+instrumental (70%) y reemplaza la pista del video sin re-encodear
+(`-c:v copy`) → `07_final.mp4`. Pipeline completo end-to-end:
+
+```bash
+uv run python -m videodub run --input video.mp4 --stage compose
+```
+
 **Milestone 4 — Síntesis con Fish S2 Pro.** La etapa `synthesize` clona la
 voz original (muestra de 15-25 s de `02_vocals.wav`, zero-shot) y genera cada
 segmento traducido como WAV en `05_segments/`, con manifest de duraciones y

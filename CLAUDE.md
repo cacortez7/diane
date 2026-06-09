@@ -571,6 +571,23 @@ hardware objetivo. Decisiones tomadas:
 > - Audio español alineado con la imagen (timing general correcto).
 > - Música de fondo preservada.
 
+**Estado: COMPLETADO.** Decisiones tomadas:
+
+- Time-stretch: usa el binario `rubberband` (apt: rubberband-cli) si está
+  en PATH; si no, cae al filtro `rubberband` del ffmpeg estático (misma
+  librería). En esta máquina corre el fallback de ffmpeg.
+- Segmentos cortos NO se rellenan con silencio en el WAV individual: el
+  ensamblado coloca cada segmento por timestamp en un timeline de ceros
+  (equivalente y más simple); se normaliza si hay solapamientos.
+- Mezcla: `amix=duration=longest:normalize=0` — la voz suele terminar
+  antes que el video y el instrumental (duración del original) completa
+  la pista. Con `duration=first` + `-shortest` el video quedaba recortado
+  a la duración de la voz (bug encontrado en el e2e).
+- Config: `max_speed` (1.25) e `instrumental_volume` (0.7) en
+  pipeline.yaml, incluidos en el hash de caché de sus etapas.
+- E2e validado: fixture → 07_final.mp4 con video+audio, 10 s, voz española
+  clonada + tono de fondo preservado.
+
 ---
 
 ### MILESTONE 6 — UI Gradio
