@@ -13,7 +13,6 @@ from __future__ import annotations
 
 import json
 import os
-import queue
 import re
 import threading
 import uuid
@@ -48,9 +47,18 @@ ARTIFACT_WHITELIST = {
 
 @dataclass
 class Job:
+    """Estado de un job + historial de eventos.
+
+    Los suscriptores SSE leen ``events`` por índice bajo ``cond`` — el
+    historial es la única fuente de verdad. Antes había una queue paralela
+    al historial y la reconexión reemitía duplicados (los eventos quedaban
+    en ambos); con índice + Condition no hay duplicados y soporta varios
+    suscriptores a la vez.
+    """
+
     id: str
-    queue: "queue.Queue[dict | None]" = field(default_factory=queue.Queue)
-    events: list[dict] = field(default_factory=list)  # historial para reconexión
+    events: list[dict] = field(default_factory=list)
+    cond: threading.Condition = field(default_factory=threading.Condition)
     job_dir: Path | None = None
     status: str = "running"  # running | done | failed
 
@@ -175,8 +183,9 @@ async def create_job(
     until = until_stage or PRESET_UNTIL[preset]
 
     def emit(event: dict) -> None:
-        job.events.append(event)
-        job.queue.put(event)
+        with job.cond:
+            job.events.append(event)
+            job.cond.notify_all()
 
     def run() -> None:
         try:
@@ -184,12 +193,13 @@ async def create_job(
                 workspace_root=WORKSPACE, config_path=config_path, on_event=emit
             )
             job.job_dir = orch.run(video_path, until_stage=until)
-            job.status = "done"
+            status = "done"
         except Exception as exc:  # noqa: BLE001 — el error viaja a la UI
-            job.status = "failed"
+            status = "failed"
             emit({"type": "error", "stage": None, "message": str(exc)[-2000:]})
-        finally:
-            job.queue.put(None)  # señal de fin del stream
+        with job.cond:
+            job.status = status
+            job.cond.notify_all()  # despierta streams para que emitan eof
 
     threading.Thread(target=run, daemon=True, name=f"job-{upload_id}").start()
     return {"job_id": upload_id, "until_stage": until}
@@ -202,18 +212,24 @@ def job_events(job_id: str) -> StreamingResponse:
         raise HTTPException(404, "job no encontrado")
 
     def stream():
-        # Reemite el historial (reconexión) y luego sigue la cola en vivo.
-        for ev in list(job.events):
-            yield f"data: {json.dumps(ev, ensure_ascii=False)}\n\n"
-        if job.status != "running":
-            yield f"data: {json.dumps({'type': 'eof', 'status': job.status})}\n\n"
-            return
+        # Cursor por suscriptor sobre el historial: reemite desde 0 (sirve
+        # de replay en reconexión) y sigue en vivo sin duplicados.
+        idx = 0
         while True:
-            ev = job.queue.get()
-            if ev is None:
-                yield f"data: {json.dumps({'type': 'eof', 'status': job.status})}\n\n"
+            with job.cond:
+                while idx >= len(job.events) and job.status == "running":
+                    job.cond.wait(timeout=30)
+                batch = job.events[idx:]
+                idx += len(batch)
+                status = job.status
+            for ev in batch:
+                yield f"data: {json.dumps(ev, ensure_ascii=False)}\n\n"
+            if not batch and status == "running":
+                # Heartbeat: mantiene viva la conexión SSE en silencios largos.
+                yield ": keepalive\n\n"
+            if status != "running" and idx >= len(job.events):
+                yield f"data: {json.dumps({'type': 'eof', 'status': status})}\n\n"
                 return
-            yield f"data: {json.dumps(ev, ensure_ascii=False)}\n\n"
 
     return StreamingResponse(stream(), media_type="text/event-stream")
 

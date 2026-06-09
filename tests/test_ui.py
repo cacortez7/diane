@@ -112,3 +112,18 @@ def test_job_flow_until_extract_audio(client):
 
     done = next(e for e in events if e["type"] in ("stage_done", "stage_cached"))
     assert done["stage"] == "extract_audio"
+
+    # Sin duplicados: cada evento de etapa aparece exactamente una vez.
+    keys = [(e["type"], e.get("stage")) for e in events if e.get("stage")]
+    assert len(keys) == len(set(keys)), f"eventos duplicados: {keys}"
+
+    # Reconexión: el replay del historial tampoco duplica y termina en eof.
+    replay = []
+    with client.stream("GET", f"/api/jobs/{job_id}/events") as resp:
+        for line in resp.iter_lines():
+            if line.startswith("data: "):
+                ev = json.loads(line[6:])
+                replay.append(ev)
+                if ev["type"] == "eof":
+                    break
+    assert replay == events
