@@ -21,6 +21,7 @@ from videodub.core.cache import StageCache, hash_inputs
 from videodub.core.logger import get_logger
 from videodub.core.runner import StageError, StageRunner
 from videodub.schemas.segment import Transcript
+from videodub.schemas.translation import Translation
 
 logger = get_logger(__name__)
 
@@ -37,6 +38,9 @@ class StageSpec:
     outputs: Callable[[Path], list[Path]]  # job_dir -> archivos de output
     args: Callable[[Path], list[str]]      # job_dir -> argv para el script
     timeout_s: float = 1800.0
+    # True: corre en el entorno del proyecto (uv run python, puede importar
+    # videodub). False: script PEP 723 con entorno uv efímero propio.
+    project_env: bool = False
 
 
 def _pipeline_stages() -> list[StageSpec]:
@@ -74,6 +78,20 @@ def _pipeline_stages() -> list[StageSpec]:
                 "--json", str(d / "03_transcript.json"),
             ],
         ),
+        StageSpec(
+            name="translate",
+            script=STAGES_DIR / "translate.py",
+            inputs=lambda d: [d / "03_transcript.srt", d / "03_transcript.json"],
+            outputs=lambda d: [d / "04_translation.srt", d / "04_translation.json"],
+            args=lambda d: [
+                "--input-srt", str(d / "03_transcript.srt"),
+                "--input-json", str(d / "03_transcript.json"),
+                "--output-srt", str(d / "04_translation.srt"),
+                "--output-json", str(d / "04_translation.json"),
+            ],
+            timeout_s=3600.0,  # free tier de Gemini añade delays; local es lento
+            project_env=True,
+        ),
     ]
 
 
@@ -87,9 +105,12 @@ class Orchestrator:
         runner: StageRunner | None = None,
     ):
         self.workspace_root = workspace_root
+        self.config_path = config_path
         self.config = yaml.safe_load(config_path.read_text()) if config_path.exists() else {}
         # Las etapas son scripts PEP 723: uv crea un entorno efímero por etapa.
         self.runner = runner or StageRunner(uv_command=["uv", "run", "--script"])
+        # Etapas livianas que importan videodub corren en el entorno del proyecto.
+        self.project_runner = StageRunner(uv_command=["uv", "run", "python"])
 
     def job_id_for(self, input_video: Path) -> str:
         """ID de job determinista: hash del contenido del video."""
@@ -127,9 +148,11 @@ class Orchestrator:
                     break
                 continue
 
-            result = self.runner.run(
-                spec.script, spec.args(job_dir), timeout_s=spec.timeout_s
-            )
+            stage_args = spec.args(job_dir)
+            if spec.name == "translate":
+                stage_args += ["--config", str(self.config_path)]
+            runner = self.project_runner if spec.project_env else self.runner
+            result = runner.run(spec.script, stage_args, timeout_s=spec.timeout_s)
             if not result.ok:
                 raise StageError(
                     f"Etapa {spec.name} falló (rc={result.returncode}, "
@@ -141,6 +164,8 @@ class Orchestrator:
 
             if spec.name == "transcribe":
                 self._validate_transcript(job_dir / "03_transcript.json")
+            elif spec.name == "translate":
+                self._validate_translation(job_dir / "04_translation.json")
 
             cache.store(spec.name, input_hash, outputs)
             logger.info("etapa %s completada: %s", spec.name, result.summary())
@@ -156,6 +181,13 @@ class Orchestrator:
             "extract_audio": [],
             "separate_vocals": [],
             "transcribe": ["source_language"],
+            "translate": [
+                "translation_backend",
+                "translation_description",
+                "target_language",
+                "gemini_model",
+                "translation_context_window",
+            ],
         }.get(stage, [])
         return {"stage": stage, **{k: self.config.get(k) for k in keys}}
 
@@ -172,6 +204,19 @@ class Orchestrator:
             transcript.language,
         )
         return transcript
+
+    @staticmethod
+    def _validate_translation(json_path: Path) -> Translation:
+        try:
+            translation = Translation.model_validate_json(json_path.read_text())
+        except ValidationError as exc:
+            raise StageError(f"04_translation.json no valida contra Translation:\n{exc}")
+        logger.info(
+            "translation válida: %d segmentos, backend=%s",
+            len(translation.segments),
+            translation.backend_used,
+        )
+        return translation
 
 
 __all__ = ["Orchestrator", "StageSpec"]

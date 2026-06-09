@@ -435,6 +435,29 @@ El backend se configura en `pipeline.yaml` y se selecciona desde la UI.
 >   modificar código.
 > - Caché funciona: mismo input + misma config no re-traduce.
 
+**Estado: IMPLEMENTADO** (código completo; validación con backends reales
+pendiente de credenciales/binario). Decisiones tomadas:
+
+- `stages/translate.py` corre en el **entorno del proyecto** (`uv run
+  python`), no PEP 723: sus deps son livianas (sin torch) y necesita
+  importar `videodub` (schemas + `LlamaCppServer`). El orquestador tiene
+  un `project_runner` para estas etapas (`StageSpec.project_env=True`).
+- La etapa acepta `--backend gemini|local` como override del YAML (lo usa
+  `scripts/benchmark_translate.py` y la UI en M6).
+- Rama Gemini: gemini-srt-translator escribe el SRT; los timestamps del
+  JSON `Translation` se toman del transcript original (la traducción
+  conserva 1:1 los segmentos).
+- Rama local: ventana deslizante = pares user/assistant previos (default
+  8, `translation_context_window` en YAML) en el chat template;
+  `temperature=0.3`. Modelo: primer `*.gguf` en `models/llm/` o
+  `local_llm_path` del YAML.
+- Pendiente en esta máquina: `GEMINI_API_KEY` no configurada, y no hay
+  compilador/llama-server instalado (requiere
+  `sudo apt install build-essential cmake nvidia-cuda-toolkit` y compilar
+  llama.cpp con `-DGGML_CUDA=ON`). Los tests de ambos backends hacen
+  **skip** automático si faltan; al configurar la key / compilar el server
+  y bajar el modelo (`scripts/download_models.sh`), corren solos.
+
 ---
 
 ### MILESTONE 4 — Síntesis con Fish S2 Pro
