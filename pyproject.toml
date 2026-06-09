@@ -20,7 +20,9 @@ videodub = "videodub.__main__:app"
 
 [dependency-groups]
 dev = [
+    "numpy>=2.4.6",
     "pytest>=8.0",
+    "soundfile>=0.14.0",
 ]
 
 [build-system]
