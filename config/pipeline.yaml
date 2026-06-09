@@ -10,3 +10,5 @@ translation_description: "YouTube tech/AI speech. Rules: 1) Informal Latin Ameri
 gemini_model: "gemini-2.5-flash"
 translation_context_window: 8   # segmentos previos como contexto (backend local)
 # local_llm_path: "models/llm/Qwen3.6-35B-A3B-IQ4_XS.gguf"  # default: primer .gguf en models/llm/
+tts_model_dir: "models/tts/fish-s2-pro"
+tts_half: false   # true = FP16 fallback si hay presión de VRAM (default BF16)

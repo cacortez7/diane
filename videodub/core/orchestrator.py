@@ -92,6 +92,18 @@ def _pipeline_stages() -> list[StageSpec]:
             timeout_s=3600.0,  # free tier de Gemini añade delays; local es lento
             project_env=True,
         ),
+        StageSpec(
+            name="synthesize",
+            script=STAGES_DIR / "synthesize.py",
+            inputs=lambda d: [d / "04_translation.json", d / "02_vocals.wav"],
+            outputs=lambda d: [d / "05_segments" / "manifest.json"],
+            args=lambda d: [
+                "--translation", str(d / "04_translation.json"),
+                "--vocals", str(d / "02_vocals.wav"),
+                "--outdir", str(d / "05_segments"),
+            ],
+            timeout_s=3600.0,
+        ),
     ]
 
 
@@ -151,6 +163,11 @@ class Orchestrator:
             stage_args = spec.args(job_dir)
             if spec.name == "translate":
                 stage_args += ["--config", str(self.config_path)]
+            elif spec.name == "synthesize":
+                if self.config.get("tts_model_dir"):
+                    stage_args += ["--model-dir", str(self.config["tts_model_dir"])]
+                if self.config.get("tts_half"):
+                    stage_args += ["--half"]
             runner = self.project_runner if spec.project_env else self.runner
             result = runner.run(spec.script, stage_args, timeout_s=spec.timeout_s)
             if not result.ok:
@@ -181,6 +198,7 @@ class Orchestrator:
             "extract_audio": [],
             "separate_vocals": [],
             "transcribe": ["source_language"],
+            "synthesize": ["tts_model_dir", "tts_half"],
             "translate": [
                 "translation_backend",
                 "translation_description",

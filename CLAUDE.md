@@ -506,6 +506,29 @@ hardware objetivo. Decisiones tomadas:
 > - Procesar 10 segmentos toma tiempo razonable (target: < 2 min en
 >    4070 Ti SUPER).
 
+**Estado: COMPLETADO.** Decisiones tomadas:
+
+- Inferencia **in-process** con `TTSInferenceEngine` de fish-speech (mismo
+  patrón que su api_server): el modelo se carga UNA vez por invocación del
+  stage y procesa todos los segmentos — confirmado que se mantiene cargado.
+- Entorno PEP 723 con `fish-speech @ git+...`. Dos workarounds:
+  - `[tool.uv] override-dependencies = ["pyaudio; sys_platform == 'never'"]`
+    — pyaudio requiere portaudio.h del sistema y solo sirve para streaming
+    de micrófono.
+  - fish_speech llama `pyrootutils.setup_root(indicator=".project-root")`
+    que no existe en el wheel pip; el stage crea el marcador en
+    site-packages antes del import.
+- **OOM fix crítico:** `text_config.max_seq_len=32768` del config.json
+  preasigna ~5 GB de KV cache → pesos BF16 (8.6 GB) + KV + codec (1.8 GB)
+  no caben en 16 GB. El stage parchea el config.json local a 4096
+  (sobra para segmentos de subtítulos). Con esto BF16 funciona sin NF4.
+- Referencia de voz: primeros segmentos hasta acumular ≥15 s (cap 25 s)
+  de `02_vocals.wav` + su texto en inglés del transcript.
+- Tags inline (`[excited]` etc.) presentes en la traducción se pasan tal
+  cual al modelo; detección automática de emociones queda para futuro.
+- El manifest (`05_segments/manifest.json`) registra RTF por segmento y
+  global. Test de 3 segmentos: 42 s incluyendo carga del modelo.
+
 ---
 
 ### MILESTONE 5 — Alineación temporal y composición final

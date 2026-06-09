@@ -10,6 +10,13 @@ especificación completa, la arquitectura y los milestones.
 
 ## Estado
 
+**Milestone 4 — Síntesis con Fish S2 Pro.** La etapa `synthesize` clona la
+voz original (muestra de 15-25 s de `02_vocals.wav`, zero-shot) y genera cada
+segmento traducido como WAV en `05_segments/`, con manifest de duraciones y
+RTF. BF16 por default; el stage reduce `max_seq_len` del modelo a 4096 para
+caber en 16 GB de VRAM. Modelo: `scripts/download_models.sh` (licencia Fish
+Audio Research, no comercial).
+
 **Milestone 3 — Traducción dual backend.** La etapa `translate` convierte el
 SRT en inglés a español latinoamericano con dos backends intercambiables vía
 `translation_backend` en `config/pipeline.yaml`:
