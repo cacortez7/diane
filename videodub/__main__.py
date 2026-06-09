@@ -71,5 +71,17 @@ def run(
     logger.info("[bold green]listo[/bold green] — outputs en %s", job_dir)
 
 
+@app.command()
+def ui(
+    host: str = typer.Option("127.0.0.1", help="host de escucha"),
+    port: int = typer.Option(7860, help="puerto"),
+) -> None:
+    """Arranca la UI web (FastAPI + React) en localhost:7860."""
+    setup_logging()
+    from videodub.ui.server import main as serve
+
+    serve(host=host, port=port)
+
+
 if __name__ == "__main__":
     app()

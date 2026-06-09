@@ -1,0 +1,22 @@
+<!-- @dsCard group="Colors" viewport="700x180" name="Backgrounds & surfaces" subtitle="Deep → raised, dark-only" -->
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="UTF-8"><link rel="stylesheet" href="../styles.css">
+<style>
+  body{margin:0;background:var(--bg-canvas);padding:20px;}
+  .grid{display:grid;grid-template-columns:repeat(6,1fr);gap:10px;}
+  .sw{border:1px solid var(--border-subtle);border-radius:var(--radius-md);overflow:hidden;}
+  .chip{height:64px;}
+  .meta{padding:8px 10px;font-family:var(--font-mono);}
+  .name{font-size:11px;color:var(--text-primary);}
+  .hex{font-size:10px;color:var(--text-muted);margin-top:2px;}
+</style></head>
+<body>
+  <div class="grid">
+    <div class="sw"><div class="chip" style="background:var(--bg-base)"></div><div class="meta"><div class="name">bg-base</div><div class="hex">#080c0d</div></div></div>
+    <div class="sw"><div class="chip" style="background:var(--bg-canvas)"></div><div class="meta"><div class="name">bg-canvas</div><div class="hex">#0c1213</div></div></div>
+    <div class="sw"><div class="chip" style="background:var(--surface-1)"></div><div class="meta"><div class="name">surface-1</div><div class="hex">#111a1b</div></div></div>
+    <div class="sw"><div class="chip" style="background:var(--surface-2)"></div><div class="meta"><div class="name">surface-2</div><div class="hex">#16201f</div></div></div>
+    <div class="sw"><div class="chip" style="background:var(--surface-3)"></div><div class="meta"><div class="name">surface-3</div><div class="hex">#1d2928</div></div></div>
+    <div class="sw"><div class="chip" style="background:var(--surface-inset)"></div><div class="meta"><div class="name">inset</div><div class="hex">#0a0f10</div></div></div>
+  </div>
+</body></html>

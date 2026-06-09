@@ -1,0 +1,88 @@
+/* Diane — Color system
+ *
+ * A dark, CRT-phosphor terminal palette. Near-black backgrounds with a faint
+ * cool green-cyan cast (the glow of an old monitor), an ANSI-derived accent set,
+ * and phosphor green as the brand signal: it's the color of "listo", of a stage
+ * box turning done, of a healthy VRAM bar. Cyan is motion — the stage that is
+ * running right now. Everything is tuned in a dark context; there is no light theme.
+ */
+
+:root {
+  /* ----- Backgrounds (deep → raised) ----- */
+  --bg-base:        #080c0d;   /* app shell / deepest letterbox */
+  --bg-canvas:      #0c1213;   /* main working surface */
+  --surface-1:      #111a1b;   /* panels, cards, the terminal pane */
+  --surface-2:      #16201f;   /* inset fields, code blocks */
+  --surface-3:      #1d2928;   /* hover / raised / active row */
+  --surface-inset:  #0a0f10;   /* sunken wells (log scrollback, inputs) */
+
+  /* ----- Borders / hairlines ----- */
+  --border-subtle:  #1d2829;
+  --border-default: #283636;
+  --border-strong:  #38494a;
+  --border-focus:   #46e08f;   /* phosphor green focus ring */
+
+  /* ----- Text ----- */
+  --text-primary:   #e7ede9;
+  --text-secondary: #9aaaa5;
+  --text-muted:     #647571;
+  --text-faint:     #43514e;   /* gutter numbers, disabled */
+  --text-on-accent: #04140c;   /* dark ink on green/cyan fills */
+
+  /* ----- ANSI / terminal accent set ----- */
+  --green:          #46e08f;   /* brand · success · done */
+  --green-bright:   #74f0a9;
+  --green-dim:      #2b9d62;
+  --green-deep:     #123524;   /* tonal fill behind green text */
+
+  --cyan:           #41cfe0;   /* active · processing · links */
+  --cyan-bright:    #7ee4f0;
+  --cyan-dim:       #2792a0;
+  --cyan-deep:      #0c2c30;
+
+  --amber:          #f3b13d;   /* warning · VRAM pressure · CPU stage */
+  --amber-dim:      #b07f23;
+  --amber-deep:     #2e2410;
+
+  --red:            #f2685e;   /* error · failed stage · OOM */
+  --red-bright:     #ff8379;
+  --red-dim:        #b0433b;
+  --red-deep:       #2e1411;
+
+  --violet:         #b794f6;   /* LLM / translation backend accent */
+  --violet-dim:     #7d5cc0;
+  --violet-deep:    #1d1530;
+
+  --blue:           #5aa9f0;   /* info, secondary links */
+  --blue-deep:      #0e1f33;
+
+  /* ----- Semantic aliases (use these in components) ----- */
+  --color-bg:            var(--bg-canvas);
+  --color-surface:       var(--surface-1);
+  --color-surface-inset: var(--surface-inset);
+  --color-text:          var(--text-primary);
+  --color-text-dim:      var(--text-secondary);
+  --color-border:        var(--border-default);
+
+  --color-accent:        var(--green);    /* primary brand / CTA */
+  --color-accent-ink:    var(--text-on-accent);
+  --color-active:        var(--cyan);     /* in-progress motion */
+  --color-link:          var(--cyan);
+
+  --color-success:       var(--green);
+  --color-warning:       var(--amber);
+  --color-danger:        var(--red);
+  --color-info:          var(--blue);
+  --color-llm:           var(--violet);
+
+  /* ----- Stage status (pipeline progress boxes) ----- */
+  --stage-pending:  var(--text-faint);
+  --stage-running:  var(--cyan);
+  --stage-done:     var(--green);
+  --stage-error:    var(--red);
+  --stage-cached:   var(--violet);   /* skipped via hash cache */
+
+  /* ----- Language motif (EN source → ES target) ----- */
+  --lang-source:    var(--text-secondary);  /* EN, neutral */
+  --lang-target:    var(--green);            /* ES, the goal */
+}

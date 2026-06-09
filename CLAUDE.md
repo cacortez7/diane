@@ -83,7 +83,7 @@ morir el proceso.
 | Time-stretch | `rubberband-cli` (apt) | Ajuste de tempo sin cambiar pitch |
 | Composición | FFmpeg | CPU |
 | Lip sync | **LTX-2.3-22b-IC-LoRA-LipDub** (Lightricks) | Video-to-video, 22B params, diffusers + ltx-video |
-| UI | `gradio` | Web local en :7860 |
+| UI | `fastapi` + `uvicorn` + kit React del design system | Web local en :7860 (antes Gradio; ver M6) |
 | Orquestación | Python `subprocess` + `psutil` | Sin Celery, Redis ni Docker |
 | Logging | `rich` + Python `logging` | Output legible en terminal |
 | Validación | `pydantic` v2 | Schemas para config y mensajes inter-etapa |
@@ -148,7 +148,8 @@ videodub/
 │   │   └── job.py
 │   │
 │   └── ui/
-│       └── gradio_app.py
+│       ├── server.py          # FastAPI backend (:7860)
+│       └── static/            # frontend React (vendorizado del design system)
 │
 ├── config/
 │   ├── pipeline.yaml          # configuración default
@@ -590,10 +591,46 @@ hardware objetivo. Decisiones tomadas:
 
 ---
 
-### MILESTONE 6 — UI Gradio
+### MILESTONE 6 — UI web (FastAPI + React)
 
 **Objetivo:** interfaz web local con selector de backend de traducción
 y plantillas de instrucciones personalizables.
+
+> **CAMBIO DE SPEC (2026-06-09):** la UI ya NO es Gradio. Existe un design
+> system completo en `Diane Design System/` (estética terminal CRT-phosphor,
+> IBM Plex Mono, tokens CSS + componentes React + maqueta funcional de la
+> app en `ui_kits/diane-app/`). Decisión: **FastAPI** como backend +
+> **el kit React tal cual** como frontend, servido en `localhost:7860`.
+> El prompt original de Gradio (abajo) sigue siendo la spec *funcional*
+> (qué controles existen y cómo se comportan); el design system es la spec
+> *visual*. Arquitectura implementada:
+>
+> - `videodub/ui/server.py` — FastAPI: sirve el frontend estático,
+>   `POST /api/jobs` (upload + config del job), `GET /api/jobs/{id}/events`
+>   (SSE con eventos de etapa + logs + VRAM), `GET /api/jobs/{id}/artifacts[/..]`
+>   (lista y descarga), `GET /api/vram`, `GET /api/health`.
+> - `videodub/ui/static/` — kit React vendorizado desde el design system
+>   (tokens, componentes, App.jsx adaptado para consumir la API real).
+> - El orquestador ganó un hook `on_event` para reportar progreso.
+> - La UI NO modifica pipeline.yaml global: el server escribe un YAML de
+>   config por job y lo pasa al orquestador.
+
+**Estado: COMPLETADO.** Notas de implementación:
+
+- CLI: `uv run python -m videodub ui` → uvicorn en `127.0.0.1:7860`.
+- Frontend vendorizado en `videodub/ui/static/` (tokens + preview runtime
+  `assets/diane-ui.preview.js` + `App.jsx` adaptado). React/babel-standalone
+  cargan desde unpkg CDN, y las fuentes IBM Plex desde Google Fonts —
+  **pendiente para offline total: vendorear React + woff2**.
+- El campo de API key en la UI solo aparece si `/api/health` reporta que
+  no hay `GEMINI_API_KEY` en el entorno del server.
+- Logs en vivo = eventos del hook `on_event` del orquestador (vocabulario
+  del runner: `→ etapa X`, `← X | rc=0 | Δ VRAM`), no el stderr crudo de
+  cada subproceso (el runner lo captura completo recién al terminar la
+  etapa). El stderr_tail viaja en el evento `error` cuando algo falla.
+- Validado end-to-end vía HTTP: upload del fixture + backend local →
+  SSE con todas las etapas → descarga de `07_final.mp4` (200, 10 s).
+- `quality` preset aún mapea a `compose`; cambiará a `lipdub` en M7.
 
 **Prompt para Claude Code:**
 

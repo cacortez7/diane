@@ -1,0 +1,23 @@
+<!-- @dsCard group="Colors" viewport="700x170" name="ANSI accent set" subtitle="Terminal palette: the 6 working hues" -->
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="UTF-8"><link rel="stylesheet" href="../styles.css">
+<style>
+  body{margin:0;background:var(--bg-canvas);padding:20px;font-family:var(--font-mono);}
+  .grid{display:grid;grid-template-columns:repeat(6,1fr);gap:10px;}
+  .sw{border-radius:var(--radius-md);overflow:hidden;border:1px solid var(--border-subtle);}
+  .chip{height:50px;}
+  .meta{padding:7px 9px;background:var(--surface-1);}
+  .name{font-size:11px;color:var(--text-primary);}
+  .hex{font-size:10px;color:var(--text-muted);margin-top:2px;}
+  .use{font-size:9px;color:var(--text-faint);margin-top:1px;}
+</style></head>
+<body>
+  <div class="grid">
+    <div class="sw"><div class="chip" style="background:var(--green)"></div><div class="meta"><div class="name">green</div><div class="hex">#46e08f</div><div class="use">ok · done</div></div></div>
+    <div class="sw"><div class="chip" style="background:var(--cyan)"></div><div class="meta"><div class="name">cyan</div><div class="hex">#41cfe0</div><div class="use">active · link</div></div></div>
+    <div class="sw"><div class="chip" style="background:var(--amber)"></div><div class="meta"><div class="name">amber</div><div class="hex">#f3b13d</div><div class="use">warn · CPU</div></div></div>
+    <div class="sw"><div class="chip" style="background:var(--red)"></div><div class="meta"><div class="name">red</div><div class="hex">#f2685e</div><div class="use">error · OOM</div></div></div>
+    <div class="sw"><div class="chip" style="background:var(--violet)"></div><div class="meta"><div class="name">violet</div><div class="hex">#b794f6</div><div class="use">LLM</div></div></div>
+    <div class="sw"><div class="chip" style="background:var(--blue)"></div><div class="meta"><div class="name">blue</div><div class="hex">#5aa9f0</div><div class="use">info</div></div></div>
+  </div>
+</body></html>

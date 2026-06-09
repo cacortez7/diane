@@ -1,0 +1,52 @@
+/* Diane — Typography
+ *
+ * Monospace-forward. IBM Plex Mono is the workhorse: headings, data, logs, labels,
+ * timestamps, the wordmark. IBM Plex Sans is reserved for running prose longer than
+ * a line or two (instruction templates, help text). When in doubt, use mono — this
+ * is a terminal.
+ */
+
+:root {
+  /* ----- Families ----- */
+  --font-mono: 'IBM Plex Mono', ui-monospace, 'SF Mono', 'JetBrains Mono', Menlo, Consolas, monospace;
+  --font-sans: 'IBM Plex Sans', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif;
+
+  /* ----- Size scale (px) — terminal-dense ----- */
+  --text-2xs:  11px;   /* gutter numbers, log meta */
+  --text-xs:   12px;   /* captions, badges, secondary meta */
+  --text-sm:   13px;   /* dense labels, table cells */
+  --text-base: 14px;   /* terminal body, default UI text */
+  --text-md:   16px;   /* comfortable body / inputs */
+  --text-lg:   20px;   /* card titles, section labels */
+  --text-xl:   26px;   /* panel headings */
+  --text-2xl:  34px;   /* page titles */
+  --text-3xl:  46px;   /* display */
+  --text-4xl:  62px;   /* hero wordmark */
+
+  /* ----- Weights ----- */
+  --weight-regular:  400;
+  --weight-medium:   500;
+  --weight-semibold: 600;
+  --weight-bold:     700;
+
+  /* ----- Line heights ----- */
+  --leading-tight:  1.15;
+  --leading-snug:   1.3;
+  --leading-normal: 1.5;
+  --leading-relaxed: 1.65;
+  --leading-code:   1.55;   /* logs / code blocks */
+
+  /* ----- Letter spacing ----- */
+  --tracking-tight:  -0.02em;
+  --tracking-normal: 0;
+  --tracking-wide:   0.04em;
+  --tracking-caps:   0.12em;   /* uppercase mono labels / kickers */
+
+  /* ----- Semantic roles ----- */
+  --font-display:   var(--font-mono);
+  --font-heading:   var(--font-mono);
+  --font-body:      var(--font-sans);
+  --font-ui:        var(--font-mono);
+  --font-code:      var(--font-mono);
+  --font-data:      var(--font-mono);   /* timestamps, MiB, RTF, counts */
+}

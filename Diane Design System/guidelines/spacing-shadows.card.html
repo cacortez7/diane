@@ -1,0 +1,20 @@
+<!-- @dsCard group="Spacing" viewport="700x180" name="Shadows & phosphor glow" subtitle="Restrained elevation; accent glows" -->
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="UTF-8"><link rel="stylesheet" href="../styles.css">
+<style>
+  body{margin:0;background:var(--bg-canvas);padding:26px;font-family:var(--font-mono);}
+  .grid{display:flex;gap:22px;flex-wrap:wrap;}
+  .item{text-align:center;}
+  .box{width:120px;height:60px;background:var(--surface-1);border:1px solid var(--border-subtle);border-radius:var(--radius-md);}
+  .lab{font-size:10px;color:var(--text-muted);margin-top:12px;}
+  .glowg{box-shadow:var(--glow-green);border-color:var(--green-dim);}
+  .glowc{box-shadow:var(--glow-cyan);border-color:var(--cyan-dim);}
+</style></head>
+<body>
+  <div class="grid">
+    <div class="item"><div class="box" style="box-shadow:var(--shadow-panel)"></div><div class="lab">shadow-panel</div></div>
+    <div class="item"><div class="box" style="box-shadow:var(--shadow-pop)"></div><div class="lab">shadow-pop</div></div>
+    <div class="item"><div class="box glowg"></div><div class="lab">glow-green</div></div>
+    <div class="item"><div class="box glowc"></div><div class="lab">glow-cyan</div></div>
+  </div>
+</body></html>

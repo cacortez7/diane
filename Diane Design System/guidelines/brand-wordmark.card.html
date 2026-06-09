@@ -1,0 +1,24 @@
+<!-- @dsCard group="Brand" viewport="700x230" name="Wordmark & lockup" subtitle="Lowercase mono + phosphor block cursor" -->
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="UTF-8"><link rel="stylesheet" href="../styles.css">
+<style>
+  body{margin:0;background:var(--bg-base);padding:30px;}
+  .stack{display:flex;flex-direction:column;gap:26px;}
+  .lockup{display:flex;align-items:center;gap:16px;}
+  .mark{width:48px;height:48px;}
+  .wm{font-family:var(--font-mono);font-weight:700;font-size:44px;color:var(--text-primary);letter-spacing:-0.02em;display:inline-flex;align-items:center;}
+  .cur{display:inline-block;width:18px;height:0.86em;background:var(--green);margin-left:6px;box-shadow:var(--glow-text-green);animation:diane-blink 1.05s step-end infinite;}
+  .prompt{font-family:var(--font-mono);font-size:18px;color:var(--text-secondary);}
+  .prompt .g{color:var(--green);}
+  .tag{font-family:var(--font-mono);font-size:12px;color:var(--text-muted);letter-spacing:var(--tracking-wide);}
+</style></head>
+<body>
+  <div class="stack">
+    <div class="lockup">
+      <img class="mark" src="../assets/diane-mark.svg" alt="">
+      <span class="wm">diane<span class="cur"></span></span>
+    </div>
+    <div class="prompt"><span class="g">~/diane</span> $ doblaje EN→ES · 100% local</div>
+    <div class="tag">DOBLAJE LOCAL · EN → ES-419 · OFFLINE · localhost:7860</div>
+  </div>
+</body></html>

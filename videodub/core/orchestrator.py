@@ -144,7 +144,11 @@ class Orchestrator:
         workspace_root: Path = Path("workspace"),
         config_path: Path = Path("config/pipeline.yaml"),
         runner: StageRunner | None = None,
+        on_event: Callable[[dict], None] | None = None,
     ):
+        # on_event recibe dicts {"type": "stage_start"|"stage_done"|"stage_cached"
+        # |"job_done"|"error", ...} — lo usa la UI para progreso en vivo.
+        self.on_event = on_event or (lambda e: None)
         self.workspace_root = workspace_root
         self.config_path = config_path
         self.config = yaml.safe_load(config_path.read_text()) if config_path.exists() else {}
@@ -178,6 +182,14 @@ class Orchestrator:
 
         cache = StageCache(job_dir)
         stages = _pipeline_stages()
+        if until_stage:
+            names = [s.name for s in stages]
+            if until_stage in names:
+                stages = stages[: names.index(until_stage) + 1]
+        self.on_event({
+            "type": "job_start", "job_id": job_id,
+            "stages": [s.name for s in stages],
+        })
 
         for spec in stages:
             stage_config = self._config_subset(spec.name)
@@ -185,9 +197,12 @@ class Orchestrator:
             outputs = spec.outputs(job_dir)
 
             if cache.is_fresh(spec.name, input_hash, outputs):
+                self.on_event({"type": "stage_cached", "stage": spec.name})
                 if spec.name == until_stage:
                     break
                 continue
+
+            self.on_event({"type": "stage_start", "stage": spec.name})
 
             stage_args = spec.args(job_dir)
             if spec.name == "translate":
@@ -204,6 +219,11 @@ class Orchestrator:
             runner = self.project_runner if spec.project_env else self.runner
             result = runner.run(spec.script, stage_args, timeout_s=spec.timeout_s)
             if not result.ok:
+                self.on_event({
+                    "type": "error", "stage": spec.name,
+                    "returncode": result.returncode,
+                    "stderr_tail": result.stderr[-1500:],
+                })
                 raise StageError(
                     f"Etapa {spec.name} falló (rc={result.returncode}, "
                     f"timeout={result.timed_out}).\nstderr:\n{result.stderr[-3000:]}"
@@ -219,10 +239,18 @@ class Orchestrator:
 
             cache.store(spec.name, input_hash, outputs)
             logger.info("etapa %s completada: %s", spec.name, result.summary())
+            self.on_event({
+                "type": "stage_done", "stage": spec.name,
+                "duration_s": round(result.duration_s, 1),
+                "vram_before_mib": result.vram_used_before_mib,
+                "vram_after_mib": result.vram_used_after_mib,
+                "summary": result.summary(),
+            })
 
             if spec.name == until_stage:
                 break
 
+        self.on_event({"type": "job_done", "job_id": job_id})
         return job_dir
 
     def _config_subset(self, stage: str) -> dict:

@@ -1,0 +1,22 @@
+<!-- @dsCard group="Type" viewport="700x180" name="Mono in data & labels" subtitle="Tabular nums, slashed zero, caps tracking" -->
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="UTF-8"><link rel="stylesheet" href="../styles.css">
+<style>
+  body{margin:0;background:var(--bg-canvas);padding:22px;font-family:var(--font-mono);}
+  .k{font-size:11px;text-transform:uppercase;letter-spacing:var(--tracking-caps);color:var(--text-muted);margin:0 0 8px;}
+  table{border-collapse:collapse;width:100%;font-variant-numeric:tabular-nums;}
+  td{padding:5px 0;font-size:13px;color:var(--text-secondary);}
+  td.n{text-align:right;color:var(--green-bright);}
+  .caps{display:flex;gap:18px;margin-top:16px;}
+  .caps span{font-size:11px;text-transform:uppercase;letter-spacing:var(--tracking-caps);color:var(--text-secondary);}
+</style></head>
+<body>
+  <p class="k">Stage timings — aligned, tabular</p>
+  <table>
+    <tr><td>extract_audio</td><td class="n">1.10s</td></tr>
+    <tr><td>separate_vocals</td><td class="n">8.42s</td></tr>
+    <tr><td>transcribe</td><td class="n">22.07s</td></tr>
+    <tr><td>synthesize</td><td class="n">104.30s</td></tr>
+  </table>
+  <div class="caps"><span>· source en</span><span>· target es-419</span><span>· backend local</span></div>
+</body></html>
