@@ -631,6 +631,14 @@ y plantillas de instrucciones personalizables.
 - Validado end-to-end vía HTTP: upload del fixture + backend local →
   SSE con todas las etapas → descarga de `07_final.mp4` (200, 10 s).
 - `quality` preset aún mapea a `compose`; cambiará a `lipdub` en M7.
+- **Entrada por URL de YouTube** (post-M6): tab "Subir archivo / URL de
+  YouTube" en `01 · ENTRADA` (diseño del design system actualizado).
+  `POST /api/download-url` descarga con yt-dlp (formato mp4 H.264 para
+  conservar `-c:v copy`) a `workspace/uploads/` y devuelve un `file_id`;
+  `POST /api/jobs` acepta `file` (upload) **o** `file_id` (descargado).
+  De paso se arregló el dropzone vendorizado, que era el mock del design
+  system (pick simulado): ahora usa un `<input type="file">` real + drag
+  and drop. Validado con un video real de YouTube hasta transcribe.
 
 **Prompt para Claude Code:**
 

@@ -35,10 +35,26 @@ function TopBar({ vramUsed, vramTotal }) {
 
 function UploadDropzone({ file, onPick }) {
   const filled = !!file;
+  const inputRef = React.useRef(null);
+  const pick = () => {
+    if (filled) { onPick(null); return; }
+    if (inputRef.current) inputRef.current.click();
+  };
+  const onFile = (e) => {
+    const f = e.target.files && e.target.files[0];
+    if (f) onPick(f);
+    e.target.value = '';
+  };
   return (
     <button
       type="button"
-      onClick={() => onPick(file ? null : { name: 'jobs_keynote_2024.mp4', size: '184 MB', dur: '12:48', res: '1920×1080' })}
+      onClick={pick}
+      onDragOver={(e) => e.preventDefault()}
+      onDrop={(e) => {
+        e.preventDefault();
+        const f = e.dataTransfer.files && e.dataTransfer.files[0];
+        if (f) onPick(f);
+      }}
       style={{
         width: '100%', textAlign: 'left', cursor: 'pointer',
         display: 'flex', alignItems: 'center', gap: 'var(--space-4)',
@@ -52,11 +68,12 @@ function UploadDropzone({ file, onPick }) {
       <span style={{ color: filled ? 'var(--green)' : 'var(--text-muted)', display: 'grid', placeItems: 'center' }}>
         {filled ? <IconFilm size={26} /> : <IconUpload size={26} />}
       </span>
+      <input ref={inputRef} type="file" accept="video/mp4,video/*" style={{ display: 'none' }} onChange={onFile} />
       {filled ? (
         <span style={{ display: 'flex', flexDirection: 'column', gap: 3, minWidth: 0 }}>
           <span style={{ fontFamily: 'var(--font-mono)', fontSize: 13, color: 'var(--green-bright)' }}>{file.name}</span>
           <span style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--text-muted)' }}>
-            {file.res} · {file.dur} · {file.size} — clic para quitar
+            {file.size ? `${(file.size / 1048576).toFixed(1)} MB · ` : ''}clic para quitar
           </span>
         </span>
       ) : (

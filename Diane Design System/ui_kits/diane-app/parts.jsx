@@ -38,7 +38,7 @@ function UploadDropzone({ file, onPick }) {
   return (
     <button
       type="button"
-      onClick={() => onPick(file ? null : { name: 'jobs_keynote_2024.mp4', size: '184 MB', dur: '12:48', res: '1920×1080' })}
+      onClick={() => onPick(file ? null : { name: 'jobs_keynote_2024.mp4', size: '184 MB', dur: '12:48', res: '1920×1080', source: 'upload' })}
       style={{
         width: '100%', textAlign: 'left', cursor: 'pointer',
         display: 'flex', alignItems: 'center', gap: 'var(--space-4)',

@@ -50,6 +50,40 @@ def test_job_validation(client):
     assert r.status_code == 400
 
 
+def test_download_url_validation(client):
+    assert client.post("/api/download-url", json={"url": "no-es-url"}).status_code == 400
+    assert client.post("/api/download-url", json={"url": "https://vimeo.com/123"}).status_code == 400
+    assert client.post("/api/jobs", data={"backend": "local"}).status_code == 400  # sin file ni file_id
+    assert client.post("/api/jobs", data={"backend": "local", "file_id": "zz"}).status_code == 400
+    assert client.post("/api/jobs", data={"backend": "local", "file_id": "a" * 12}).status_code == 404
+
+
+@needs_ffmpeg
+def test_job_flow_with_file_id(client):
+    """Un video ya presente en uploads/ (como deja /api/download-url) entra
+    al pipeline vía file_id igual que un upload manual."""
+    file_id = "abc123def456"
+    uploads = server.WORKSPACE / "uploads"
+    uploads.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(FIXTURE, uploads / f"{file_id}.mp4")
+
+    r = client.post("/api/jobs", data={
+        "preset": "fast", "backend": "local",
+        "file_id": file_id, "until_stage": "extract_audio",
+    })
+    assert r.status_code == 200, r.text
+    job_id = r.json()["job_id"]
+    assert job_id == file_id
+
+    with client.stream("GET", f"/api/jobs/{job_id}/events") as resp:
+        for line in resp.iter_lines():
+            if line.startswith("data: "):
+                ev = json.loads(line[6:])
+                if ev["type"] == "eof":
+                    assert ev["status"] == "done"
+                    break
+
+
 @needs_ffmpeg
 def test_job_flow_until_extract_audio(client):
     with FIXTURE.open("rb") as fh:
