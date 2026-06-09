@@ -1,0 +1,66 @@
+/* Diane — Base / reset
+ *
+ * Sets the dark terminal canvas, default mono type, selection color, scrollbars,
+ * and a couple of shared keyframes (cursor blink, phosphor pulse). Scoped lightly
+ * so it can sit under a design-system page without fighting card layouts.
+ */
+
+*, *::before, *::after { box-sizing: border-box; }
+
+html {
+  -webkit-text-size-adjust: 100%;
+  text-rendering: optimizeLegibility;
+}
+
+body {
+  margin: 0;
+  background: var(--bg-canvas);
+  color: var(--text-primary);
+  font-family: var(--font-ui);
+  font-size: var(--text-base);
+  line-height: var(--leading-normal);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  font-feature-settings: "liga" 1, "calt" 1, "zero" 1;   /* slashed zero in mono */
+}
+
+::selection {
+  background: rgba(70, 224, 143, 0.28);
+  color: var(--text-primary);
+}
+
+a { color: var(--color-link); text-decoration: none; }
+a:hover { text-decoration: underline; text-underline-offset: 2px; }
+
+code, pre, kbd, samp { font-family: var(--font-code); }
+
+/* Thin dark scrollbars to match the terminal surfaces */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--border-strong) transparent;
+}
+*::-webkit-scrollbar { width: 10px; height: 10px; }
+*::-webkit-scrollbar-track { background: transparent; }
+*::-webkit-scrollbar-thumb {
+  background: var(--border-default);
+  border-radius: var(--radius-pill);
+  border: 2px solid var(--bg-canvas);
+}
+*::-webkit-scrollbar-thumb:hover { background: var(--border-strong); }
+
+/* Shared keyframes */
+@keyframes diane-blink {
+  0%, 48% { opacity: 1; }
+  49%, 100% { opacity: 0; }
+}
+@keyframes diane-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.45; }
+}
+@keyframes diane-scan {
+  0% { background-position: 0 0; }
+  100% { background-position: 0 100%; }
+}
+@keyframes diane-spin {
+  to { transform: rotate(360deg); }
+}

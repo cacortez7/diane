@@ -1,0 +1,70 @@
+<!-- @dsCard group="Components" viewport="700x680" name="Forms — Segmented · Radio · Select · Field · Toggle" subtitle="Config controls for the dub run" -->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<link rel="stylesheet" href="../../styles.css">
+<script crossorigin src="https://unpkg.com/react@18.3.1/umd/react.production.min.js"></script>
+<script crossorigin src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.production.min.js"></script>
+<script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js"></script>
+<script type="text/babel" src="../../assets/diane-ui.preview.js"></script>
+<style>
+  body { margin: 0; background: var(--bg-canvas); padding: 24px; }
+  .grp { margin-bottom: 22px; }
+  .grp:last-child { margin-bottom: 0; }
+  .lbl { font-family: var(--font-mono); font-size: var(--text-2xs); text-transform: uppercase;
+         letter-spacing: var(--tracking-caps); color: var(--text-muted); margin: 0 0 10px; }
+  .two { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; align-items: start; }
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel">
+  const { SegmentedControl, RadioCards, Select, TextField, Toggle, Badge } = window.DianeDesignSystem_fdee8c;
+  function Demo() {
+    const [preset, setPreset] = React.useState('balanced');
+    const [backend, setBackend] = React.useState('local');
+    const [tpl, setTpl] = React.useState('YouTube Tech/AI');
+    const [instr, setInstr] = React.useState('Informal Latin American Spanish. Convert numbers to words. Proper nouns phonetically: Apple=Ápol, Jobs=Yobs.');
+    const [lip, setLip] = React.useState(false);
+    return (
+      <div>
+        <div className="grp">
+          <p className="lbl">SegmentedControl — preset</p>
+          <SegmentedControl block value={preset} onChange={setPreset}
+            options={['fast','balanced','quality']} />
+        </div>
+        <div className="grp">
+          <p className="lbl">RadioCards — backend de traducción</p>
+          <RadioCards value={backend} onChange={setBackend} options={[
+            { value:'gemini', label:'Gemini API', badge:<span style={{marginLeft:8}}><Badge tone="cyan">online</Badge></span>,
+              description:'Gratis vía Google AI Studio. Requiere GEMINI_API_KEY.' },
+            { value:'local', label:'Local · Qwen 35B', badge:<span style={{marginLeft:8}}><Badge tone="violet">offline</Badge></span>,
+              description:'llama.cpp 100% offline · -ngl 24 · ~13.5 GB VRAM.' },
+          ]} />
+        </div>
+        <div className="two">
+          <div className="grp" style={{marginBottom:0}}>
+            <p className="lbl">Select</p>
+            <Select label="Plantilla" value={tpl} onChange={setTpl}
+              options={['YouTube Tech/AI','Entretenimiento','Documental','Personalizado']} />
+          </div>
+          <div className="grp" style={{marginBottom:0}}>
+            <p className="lbl">Toggle</p>
+            <div style={{paddingTop:'22px'}}>
+              <Toggle checked={lip} onChange={setLip} label="Lip sync (LTX)" />
+            </div>
+          </div>
+        </div>
+        <div className="grp" style={{marginTop:'22px'}}>
+          <p className="lbl">TextField — instrucciones</p>
+          <TextField multiline rows={3} value={instr} onChange={setInstr}
+            help="Editable en cualquier momento antes de iniciar el doblaje." />
+        </div>
+      </div>
+    );
+  }
+  ReactDOM.createRoot(document.getElementById('root')).render(<Demo />);
+</script>
+</body>
+</html>

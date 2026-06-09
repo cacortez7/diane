@@ -1,0 +1,27 @@
+/* Diane — Spacing & layout
+ *
+ * 4px base grid. Terminal UIs are dense; default gaps are tight and generous
+ * whitespace is used deliberately for breathing room around panels.
+ */
+
+:root {
+  --space-0:  0;
+  --space-1:  4px;
+  --space-2:  8px;
+  --space-3:  12px;
+  --space-4:  16px;
+  --space-5:  20px;
+  --space-6:  24px;
+  --space-8:  32px;
+  --space-10: 40px;
+  --space-12: 48px;
+  --space-16: 64px;
+  --space-20: 80px;
+  --space-24: 96px;
+
+  /* ----- Layout rails ----- */
+  --rail-sidebar:   260px;   /* config sidebar */
+  --content-max:    1240px;  /* app shell max width */
+  --panel-gap:      var(--space-6);
+  --field-gap:      var(--space-4);
+}

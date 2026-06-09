@@ -1,0 +1,18 @@
+<!-- @dsCard group="Colors" viewport="700x150" name="Stage status" subtitle="Pipeline progress encoding" -->
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="UTF-8"><link rel="stylesheet" href="../styles.css">
+<style>
+  body{margin:0;background:var(--bg-canvas);padding:20px;font-family:var(--font-mono);}
+  .row{display:flex;gap:10px;flex-wrap:wrap;}
+  .pill{display:flex;align-items:center;gap:8px;padding:9px 13px;border-radius:var(--radius-sm);background:var(--surface-2);border:1px solid var(--border-subtle);border-left:2px solid var(--_c);font-size:12px;color:var(--text-primary);}
+  .dot{width:8px;height:8px;border-radius:50%;background:var(--_c);}
+</style></head>
+<body>
+  <div class="row">
+    <div class="pill" style="--_c:var(--stage-pending)"><span class="dot"></span>pending</div>
+    <div class="pill" style="--_c:var(--stage-running)"><span class="dot"></span>running</div>
+    <div class="pill" style="--_c:var(--stage-done)"><span class="dot"></span>done</div>
+    <div class="pill" style="--_c:var(--stage-error)"><span class="dot"></span>error</div>
+    <div class="pill" style="--_c:var(--stage-cached)"><span class="dot"></span>cached</div>
+  </div>
+</body></html>

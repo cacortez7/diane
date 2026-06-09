@@ -1,0 +1,25 @@
+<!-- @dsCard group="Colors" viewport="700x190" name="Text & borders" subtitle="Foreground scale + hairlines on dark" -->
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="UTF-8"><link rel="stylesheet" href="../styles.css">
+<style>
+  body{margin:0;background:var(--bg-canvas);padding:20px;font-family:var(--font-mono);}
+  .text-row{display:flex;flex-direction:column;gap:8px;margin-bottom:18px;}
+  .t{font-size:15px;display:flex;justify-content:space-between;align-items:baseline;border-bottom:1px solid var(--border-subtle);padding-bottom:7px;}
+  .t .tag{font-size:11px;color:var(--text-muted);}
+  .borders{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;}
+  .b{height:44px;border-radius:var(--radius-sm);background:var(--surface-1);display:grid;place-items:center;font-size:10px;color:var(--text-muted);}
+</style></head>
+<body>
+  <div class="text-row">
+    <div class="t" style="color:var(--text-primary)">primary — voz clonada lista<span class="tag">#e7ede9</span></div>
+    <div class="t" style="color:var(--text-secondary)">secondary — 8 segmentos · es-419<span class="tag">#9aaaa5</span></div>
+    <div class="t" style="color:var(--text-muted)">muted — caché por hash de inputs<span class="tag">#647571</span></div>
+    <div class="t" style="color:var(--text-faint)">faint — gutter · disabled<span class="tag">#43514e</span></div>
+  </div>
+  <div class="borders">
+    <div class="b" style="border:1px solid var(--border-subtle)">subtle</div>
+    <div class="b" style="border:1px solid var(--border-default)">default</div>
+    <div class="b" style="border:1px solid var(--border-strong)">strong</div>
+    <div class="b" style="border:1px solid var(--border-focus)">focus</div>
+  </div>
+</body></html>

@@ -1,0 +1,30 @@
+<!-- @dsCard group="Diane App" viewport="1280x860" name="Dubbing app — full view" subtitle="Upload → configure → run pipeline → preview" -->
+<!-- @startingPoint section="Diane App" subtitle="Local EN→ES dubbing app (Gradio :7860 recreation)" viewport="1280x860" -->
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>diane — doblaje EN→ES</title>
+<link rel="icon" href="../../assets/diane-mark.svg">
+<link rel="stylesheet" href="../../styles.css">
+<script crossorigin src="https://unpkg.com/react@18.3.1/umd/react.production.min.js"></script>
+<script crossorigin src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.production.min.js"></script>
+<script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js"></script>
+<script type="text/babel" src="../../assets/diane-ui.preview.js"></script>
+<style>
+  html, body { height: 100%; }
+  body { margin: 0; background: var(--bg-canvas); }
+  #root { min-height: 100%; }
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel" src="icons.jsx"></script>
+<script type="text/babel" src="parts.jsx"></script>
+<script type="text/babel" src="App.jsx"></script>
+<script type="text/babel">
+  ReactDOM.createRoot(document.getElementById('root')).render(React.createElement(window.DianeApp));
+</script>
+</body>
+</html>

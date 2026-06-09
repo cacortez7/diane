@@ -10,6 +10,16 @@ especificación completa, la arquitectura y los milestones.
 
 ## Estado
 
+**Milestone 6 — UI web (FastAPI + React).** Interfaz local en
+`localhost:7860` con la estética terminal del design system: upload de MP4,
+preset, selector de backend de traducción (Gemini/Qwen local), plantillas de
+instrucciones editables, progreso por etapa y logs en vivo (SSE), VRAM meter
+real, preview del video final y descarga de artefactos.
+
+```bash
+uv run python -m videodub ui   # → http://localhost:7860
+```
+
 **Milestone 5 — Alineación y composición final.** `align_timing` ajusta cada
 segmento sintetizado a su hueco original (rubberband, cap 1.25x, sin cambiar
 pitch) y los ensambla en `06_synth_aligned.wav`; `compose` mezcla voz (100%) +

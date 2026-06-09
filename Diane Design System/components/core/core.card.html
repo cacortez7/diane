@@ -1,0 +1,82 @@
+<!-- @dsCard group="Components" viewport="700x560" name="Core — Button · Badge · Card" subtitle="Actions, status tokens, panels" -->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<link rel="stylesheet" href="../../styles.css">
+<script crossorigin src="https://unpkg.com/react@18.3.1/umd/react.production.min.js"></script>
+<script crossorigin src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.production.min.js"></script>
+<script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js"></script>
+<script type="text/babel" src="../../assets/diane-ui.preview.js"></script>
+<style>
+  body { margin: 0; background: var(--bg-canvas); padding: 24px; }
+  .grp { margin-bottom: 26px; }
+  .grp:last-child { margin-bottom: 0; }
+  .lbl { font-family: var(--font-mono); font-size: var(--text-2xs); text-transform: uppercase;
+         letter-spacing: var(--tracking-caps); color: var(--text-muted); margin: 0 0 12px; }
+  .row { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 12px; }
+  .row:last-child { margin-bottom: 0; }
+  .cards { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel">
+  const { Button, Badge, Card } = window.DianeDesignSystem_fdee8c;
+  function Demo() {
+    return (
+      <div>
+        <div className="grp">
+          <p className="lbl">Button</p>
+          <div className="row">
+            <Button variant="primary" size="lg" leadingIcon={<span>▶</span>}>Iniciar doblaje</Button>
+            <Button variant="secondary" size="lg">Cancelar</Button>
+            <Button variant="ghost" size="lg">Ver logs</Button>
+            <Button variant="danger" size="lg">Abortar</Button>
+          </div>
+          <div className="row">
+            <Button variant="primary">commit</Button>
+            <Button variant="primary" loading>procesando</Button>
+            <Button variant="secondary" disabled>disabled</Button>
+            <Button variant="ghost" size="sm" trailingIcon={<span>↗</span>}>descargar</Button>
+          </div>
+        </div>
+
+        <div className="grp">
+          <p className="lbl">Badge</p>
+          <div className="row">
+            <Badge tone="green" dot>rc=0</Badge>
+            <Badge tone="cyan" dot pulse uppercase>running</Badge>
+            <Badge tone="amber" uppercase>GPU · 6 GB</Badge>
+            <Badge tone="red" dot>OOM</Badge>
+            <Badge tone="violet">Qwen 35B</Badge>
+            <Badge tone="blue">WhisperX</Badge>
+            <Badge tone="neutral" outline>BF16</Badge>
+          </div>
+        </div>
+
+        <div className="grp">
+          <p className="lbl">Card</p>
+          <div className="cards">
+            <Card title={<>~/workspace/<b>a1f9c2</b>/07_final.mp4</>} terminalDots
+                  actions={<Button size="sm" variant="ghost" trailingIcon={<span>↗</span>}>descargar</Button>}>
+              <p style={{margin:0, fontFamily:'var(--font-sans)', fontSize:'13px', color:'var(--text-secondary)', lineHeight:1.5}}>
+                Video doblado listo. Voz clonada + instrumental al 70%, sin re-encode de video.
+              </p>
+            </Card>
+            <Card title="CONFIG DEL JOB">
+              <div style={{display:'flex', gap:'8px', flexWrap:'wrap'}}>
+                <Badge tone="green">balanced</Badge>
+                <Badge tone="violet">local</Badge>
+                <Badge tone="neutral" outline>es-419</Badge>
+              </div>
+            </Card>
+          </div>
+        </div>
+      </div>
+    );
+  }
+  ReactDOM.createRoot(document.getElementById('root')).render(<Demo />);
+</script>
+</body>
+</html>
