@@ -104,6 +104,35 @@ def _pipeline_stages() -> list[StageSpec]:
             ],
             timeout_s=3600.0,
         ),
+        StageSpec(
+            name="align_timing",
+            script=STAGES_DIR / "align_timing.py",
+            inputs=lambda d: [d / "05_segments" / "manifest.json", d / "04_translation.json"],
+            outputs=lambda d: [d / "06_synth_aligned.wav"],
+            args=lambda d: [
+                "--segments-dir", str(d / "05_segments"),
+                "--translation", str(d / "04_translation.json"),
+                "--output", str(d / "06_synth_aligned.wav"),
+            ],
+            timeout_s=600.0,
+        ),
+        StageSpec(
+            name="compose",
+            script=STAGES_DIR / "compose.py",
+            inputs=lambda d: [
+                d / "00_source.mp4",
+                d / "06_synth_aligned.wav",
+                d / "02_instrumental.wav",
+            ],
+            outputs=lambda d: [d / "07_final.mp4"],
+            args=lambda d: [
+                "--video", str(d / "00_source.mp4"),
+                "--voice", str(d / "06_synth_aligned.wav"),
+                "--instrumental", str(d / "02_instrumental.wav"),
+                "--output", str(d / "07_final.mp4"),
+            ],
+            timeout_s=600.0,
+        ),
     ]
 
 
@@ -168,6 +197,10 @@ class Orchestrator:
                     stage_args += ["--model-dir", str(self.config["tts_model_dir"])]
                 if self.config.get("tts_half"):
                     stage_args += ["--half"]
+            elif spec.name == "align_timing" and self.config.get("max_speed"):
+                stage_args += ["--max-speed", str(self.config["max_speed"])]
+            elif spec.name == "compose" and self.config.get("instrumental_volume"):
+                stage_args += ["--instrumental-volume", str(self.config["instrumental_volume"])]
             runner = self.project_runner if spec.project_env else self.runner
             result = runner.run(spec.script, stage_args, timeout_s=spec.timeout_s)
             if not result.ok:
@@ -199,6 +232,8 @@ class Orchestrator:
             "separate_vocals": [],
             "transcribe": ["source_language"],
             "synthesize": ["tts_model_dir", "tts_half"],
+            "align_timing": ["max_speed"],
+            "compose": ["instrumental_volume"],
             "translate": [
                 "translation_backend",
                 "translation_description",
