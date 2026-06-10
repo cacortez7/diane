@@ -61,6 +61,7 @@ class Job:
     cond: threading.Condition = field(default_factory=threading.Condition)
     job_dir: Path | None = None
     status: str = "running"  # running | done | failed
+    cancel_event: threading.Event = field(default_factory=threading.Event)
     # Revisión humana de la traducción: el orquestador bloquea en
     # review_event.wait() y POST /resume lo libera.
     review_event: threading.Event | None = None
@@ -68,6 +69,21 @@ class Job:
 
 
 JOBS: dict[str, Job] = {}
+
+# Una sola GPU: solo un pipeline a la vez. Sin esto, "Volver a doblar"
+# lanzaba un segundo orquestador con el anterior aún vivo y synthesize
+# moría por OOM contra la VRAM del otro job (el vram-guard de cada uno
+# no puede proteger contra un pipeline hermano corriendo en paralelo).
+PIPELINE_LOCK = threading.Lock()
+
+
+def _cancel_active_jobs() -> None:
+    """Marca como cancelados los jobs en curso (los despierta si revisan)."""
+    for other in JOBS.values():
+        if other.status == "running":
+            other.cancel_event.set()
+            if other.review_event is not None:
+                other.review_event.set()
 
 app = FastAPI(title="diane", version="1.0.0")
 
@@ -205,6 +221,10 @@ async def create_job(
         # Proceso local single-user: el subproceso de translate hereda el env.
         os.environ["GEMINI_API_KEY"] = api_key
 
+    # Cancelar cualquier job en curso ANTES de encolar el nuevo: el lock
+    # de pipeline serializa la GPU y la cancelación evita esperar a que el
+    # job viejo (p. ej. abandonado en revisión) la suelte por sí solo.
+    _cancel_active_jobs()
     job = Job(id=upload_id)
     want_review = review.lower() in ("1", "true", "yes", "on")
     if want_review:
@@ -228,17 +248,24 @@ async def create_job(
     def wait_review() -> None:
         job.review_event.wait()
         job.review_event.clear()
+        if job.cancel_event.is_set():
+            raise RuntimeError("job cancelado: se lanzó un doblaje nuevo")
 
     def run() -> None:
         try:
-            orch = Orchestrator(
-                workspace_root=WORKSPACE, config_path=config_path, on_event=emit,
-                on_review=wait_review if want_review else None,
-            )
-            job.job_dir = orch.run(video_path, until_stage=until)
+            with PIPELINE_LOCK:  # una sola GPU: un pipeline a la vez
+                if job.cancel_event.is_set():
+                    raise RuntimeError("job cancelado: se lanzó un doblaje nuevo")
+                orch = Orchestrator(
+                    workspace_root=WORKSPACE, config_path=config_path, on_event=emit,
+                    on_review=wait_review if want_review else None,
+                    should_cancel=job.cancel_event.is_set,
+                )
+                job.job_dir = orch.run(video_path, until_stage=until)
             status = "done"
         except Exception as exc:  # noqa: BLE001 — el error viaja a la UI
             status = "failed"
+            job.in_review = False
             emit({"type": "error", "stage": None, "message": str(exc)[-2000:]})
         with job.cond:
             job.status = status
