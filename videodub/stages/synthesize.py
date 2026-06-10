@@ -34,11 +34,18 @@ de emociones del audio original queda para una iteración futura.
 from __future__ import annotations
 
 import argparse
+import gc
 import io
 import json
+import os
 import sys
 import time
 from pathlib import Path
+
+# Debe fijarse ANTES de importar torch (el orquestador ya lo pasa vía
+# extra_env; esto cubre ejecuciones directas del script). Mitiga OOM por
+# fragmentación en las activaciones del DAC (conv1d sobre audio largo).
+os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
 
 
 def log(msg: str) -> None:
@@ -150,6 +157,11 @@ def main() -> int:
             text=seg["text"],
             references=[reference],
             format="wav",
+            # Chunking interno de Fish: el texto se trocea cada ~200 chars
+            # antes del decode, acotando las activaciones del DAC (el OOM
+            # de modded_dac conv1d ocurre al decodificar audio largo en
+            # una sola pasada).
+            chunk_length=200,
             max_new_tokens=args.max_new_tokens,
             temperature=0.7,
             top_p=0.7,
@@ -178,8 +190,21 @@ def main() -> int:
             "target_duration_s": round(seg["end"] - seg["start"], 3),
             "gen_s": round(gen_s, 2),
         })
+        peak_gb = (
+            torch.cuda.max_memory_allocated() / (1024**3)
+            if torch.cuda.is_available() else 0.0
+        )
         log(f"segmento {i}/{len(segments)}: {audio_s:.1f}s de audio en "
-            f"{gen_s:.1f}s (RTF={gen_s / max(audio_s, 0.01):.2f})")
+            f"{gen_s:.1f}s (RTF={gen_s / max(audio_s, 0.01):.2f}, "
+            f"pico VRAM {peak_gb:.1f} GB)")
+
+        # Limpieza entre segmentos: libera activaciones del DAC y resetea
+        # el contador de pico. Los PESOS quedan cargados (eso es lo que
+        # queremos: un solo load por invocación del stage).
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+            torch.cuda.reset_peak_memory_stats()
+        gc.collect()
 
     rtf = total_gen_s / max(total_audio_s, 0.01)
     manifest = {
