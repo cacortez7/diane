@@ -588,6 +588,21 @@ hardware objetivo. Decisiones tomadas:
   pipeline.yaml, incluidos en el hash de caché de sus etapas.
 - E2e validado: fixture → 07_final.mp4 con video+audio, 10 s, voz española
   clonada + tono de fondo preservado.
+- **Calidad de audio (post-M6, 2026-06-10)** — 4 fixes CPU/texto:
+  1. synthesize: punto final forzado si falta `.!?…` (anti-alucinación),
+     cap de tokens proporcional al slot (`slot_s*21.5*1.7`, mín 48) y
+     sampling suave para textos ≤12 chars (temp 0.4 / rep 1.05) que
+     evitaban vocales sostenidas en "No.", "Sí.".
+  2. align_timing: `trim_trailing_silence` (-40 dB, margen 150 ms) por
+     WAV ANTES de medir — las colas de Fish inflaban la velocidad
+     uniforme y disparaban excepciones falsas.
+  3. align_timing: estrategia de **velocidad uniforme global** (audio ES
+     total / slots EN total, cap max_speed) + excepción suavizada
+     `min(needed, max(uniform*1.15, max_speed), 2.0)` por segmento.
+  4. align_timing: en el ensamblado ningún segmento pasa del inicio del
+     siguiente (-30 ms); el desborde se trunca con fade-out de 80 ms en
+     vez de sumar dos voces. Summary: `truncated`, `trimmed_silence_s`.
+  Tests CPU en `tests/test_align_timing_helpers.py`.
 
 ---
 

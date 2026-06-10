@@ -212,8 +212,25 @@ def main() -> int:
     total_audio_s, total_gen_s = 0.0, 0.0
 
     for i, seg in batch:
+        # Anti-alucinación: sin puntuación final fuerte el AR sigue
+        # generando audio de más al final del segmento.
+        text = seg["text"].strip()
+        if text and text[-1] not in ".!?…":
+            text += "."
+
+        # Cap de tokens proporcional al slot disponible (~21.5 frames/s de
+        # audio + 70% de holgura): acota cuánto puede divagar el AR.
+        slot_s = seg["end"] - seg["start"]
+        max_new_tokens = min(args.max_new_tokens, max(48, int(slot_s * 21.5 * 1.7)))
+        if max_new_tokens < args.max_new_tokens:
+            log(f"segmento {i}: cap de tokens {max_new_tokens} "
+                f"(slot {slot_s:.2f}s, default {args.max_new_tokens})")
+
+        # Textos muy cortos ("No.", "Sí.") con sampling default producen
+        # vocales sostenidas antinaturales: bajar temperatura y penalización.
+        short = len(text) <= 12
         req = ServeTTSRequest(
-            text=seg["text"],
+            text=text,
             references=[reference],
             format="wav",
             # Chunking interno de Fish: el texto se trocea ANTES de generar
@@ -228,10 +245,10 @@ def main() -> int:
             # pico de activaciones del encoder sumado a los pesos BF16
             # superaba los 16 GB.
             use_memory_cache="on",
-            max_new_tokens=args.max_new_tokens,
-            temperature=0.7,
+            max_new_tokens=max_new_tokens,
+            temperature=0.4 if short else 0.7,
             top_p=0.7,
-            repetition_penalty=1.2,
+            repetition_penalty=1.05 if short else 1.2,
         )
         t0 = time.monotonic()
         final = None

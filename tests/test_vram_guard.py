@@ -63,5 +63,6 @@ def test_kills_only_pipeline_strays(orch, monkeypatch):
 
 def test_synthesize_spec_has_guard_and_alloc_conf():
     spec = next(s for s in _pipeline_stages() if s.name == "synthesize")
-    assert spec.min_free_vram_mib == 11264
+    # Pico real medido del proceso de synthesize: ~13.9 GiB.
+    assert spec.min_free_vram_mib == 14336
     assert spec.extra_env["PYTORCH_CUDA_ALLOC_CONF"] == "expandable_segments:True"
