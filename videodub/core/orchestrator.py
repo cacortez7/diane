@@ -258,6 +258,13 @@ class Orchestrator:
 
             cache.store(spec.name, input_hash, outputs)
             logger.info("etapa %s completada: %s", spec.name, result.summary())
+
+            if spec.name == "translate" and vram.is_available():
+                # El backend local debe matar su llama-server al salir; si
+                # quedó residente (~13.5 GB) lo detectamos y matamos AQUÍ,
+                # no recién en el vram-guard de synthesize.
+                self._kill_stray_gpu_processes()
+
             self.on_event({
                 "type": "stage_done", "stage": spec.name,
                 "duration_s": round(result.duration_s, 1),
