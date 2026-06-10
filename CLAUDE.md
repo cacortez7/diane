@@ -584,7 +584,7 @@ hardware objetivo. Decisiones tomadas:
   antes que el video y el instrumental (duración del original) completa
   la pista. Con `duration=first` + `-shortest` el video quedaba recortado
   a la duración de la voz (bug encontrado en el e2e).
-- Config: `max_speed` (1.25) e `instrumental_volume` (0.7) en
+- Config: `max_speed` (1.15) e `instrumental_volume` (0.7) en
   pipeline.yaml, incluidos en el hash de caché de sus etapas.
 - E2e validado: fixture → 07_final.mp4 con video+audio, 10 s, voz española
   clonada + tono de fondo preservado.
