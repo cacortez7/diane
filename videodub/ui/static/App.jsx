@@ -427,6 +427,7 @@ function PreviewCard({ job, backend }) {
   const [artifacts, setArtifacts] = React.useState([]);
   const finalName = '07_final.mp4';
   const url = (name) => `/api/jobs/${job}/artifacts/${name}`;
+  const dlUrl = (name) => `${url(name)}?download=1`;
 
   React.useEffect(() => {
     fetch(`/api/jobs/${job}/artifacts`).then((r) => r.json())
@@ -458,14 +459,14 @@ function PreviewCard({ job, backend }) {
             {finalMeta ? `${(finalMeta.size_bytes / 1048576).toFixed(1)} MB · ` : ''}es-419 · {backend === 'local' ? 'Qwen 35B' : 'Gemini'}
           </span>
         </span>
-        <a href={url(finalName)} download style={{ textDecoration: 'none' }}>
+        <a href={dlUrl(finalName)} download style={{ textDecoration: 'none' }}>
           <Button size="md" variant="primary" leadingIcon={<IconDownload size={15} />}>Descargar video</Button>
         </a>
       </div>
 
       <div style={{ display: 'flex', flexWrap: 'wrap', gap: 'var(--space-2)', padding: '0 var(--space-4) var(--space-4)' }}>
         {secondary.map((a) => (
-          <a key={a.name} href={url(a.name)} download style={{
+          <a key={a.name} href={dlUrl(a.name)} download style={{
             display: 'inline-flex', alignItems: 'center', gap: 8, cursor: 'pointer', textDecoration: 'none',
             background: 'var(--surface-2)', border: '1px solid var(--border-default)', borderRadius: 'var(--radius-sm)',
             padding: '6px 10px', color: 'var(--text-secondary)', fontFamily: 'var(--font-mono)', fontSize: 11, whiteSpace: 'nowrap',
