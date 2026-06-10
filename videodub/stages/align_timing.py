@@ -18,6 +18,13 @@ solapar dos voces es peor que hablar rápido.
 
 Si es más corto que el slot: el silencio lo aporta el timeline.
 
+Higiene de audio:
+- Al cargar cada WAV se recorta la cola de silencio/residuo de Fish
+  (umbral -40 dB, margen 150 ms) ANTES de medir duraciones.
+- En el ensamblado, ningún segmento pasa del inicio del siguiente
+  (-30 ms): el desborde se trunca con fade-out lineal de 80 ms en vez
+  de sumarse como dos voces simultáneas.
+
 Luego ensambla todos los segmentos en ``06_synth_aligned.wav`` colocando
 cada uno en su timestamp original.
 
@@ -39,6 +46,27 @@ from pathlib import Path
 
 def log(msg: str) -> None:
     print(f"[align_timing] {msg}", file=sys.stderr, flush=True)
+
+
+def trim_trailing_silence(audio, sr: int, threshold_db: float = -40.0,
+                          min_keep_s: float = 0.15):
+    """Recorta el silencio/cola residual al final de un WAV de Fish.
+
+    Busca la última muestra cuyo |valor| supera el umbral y corta ahí,
+    conservando ``min_keep_s`` de margen. Sin esto, las colas inflan las
+    duraciones de la pasada 1 → sube la velocidad uniforme global y se
+    disparan excepciones de presupuesto que no corresponden.
+    """
+    import numpy as np
+
+    if len(audio) == 0:
+        return audio
+    threshold = 10.0 ** (threshold_db / 20.0)
+    above = np.flatnonzero(np.abs(audio) > threshold)
+    if len(above) == 0:
+        return audio[: max(1, int(min_keep_s * sr))]
+    end = min(len(audio), int(above[-1]) + 1 + int(min_keep_s * sr))
+    return audio[:end]
 
 
 def stretch(in_wav: Path, out_wav: Path, speed: float) -> None:
@@ -72,14 +100,25 @@ def main() -> int:
     seg_dir = Path(args.segments_dir)
 
     sr = None
-    placed, stretched, capped = [], 0, 0
+    placed, stretched, capped, truncated = [], 0, 0, 0
 
-    # Pasada 1: medir duraciones para calcular la velocidad uniforme global.
-    durations, slot_total = [], 0.0
+    # Pasada 1: cargar + recortar cola de silencio UNA vez por WAV; las
+    # duraciones para la velocidad uniforme deben ser las recortadas.
+    trimmed, durations, slot_total, trimmed_total_s = [], [], 0.0, 0.0
     for i, seg in enumerate(segments, start=1):
-        info = sf.info(str(seg_dir / f"{i:04d}.wav"))
-        durations.append(info.frames / info.samplerate)
+        wav_path = seg_dir / f"{i:04d}.wav"
+        audio, seg_sr = sf.read(str(wav_path))
+        if audio.ndim > 1:
+            audio = audio.mean(axis=1)
+        sr = sr or seg_sr
+        assert seg_sr == sr, f"samplerate inconsistente en {wav_path}"
+        raw_len = len(audio)
+        audio = trim_trailing_silence(audio, sr)
+        trimmed_total_s += (raw_len - len(audio)) / sr
+        trimmed.append(audio)
+        durations.append(len(audio) / sr)
         slot_total += seg["end"] - seg["start"]
+    log(f"colas de silencio recortadas: {trimmed_total_s:.1f}s en total")
 
     uniform = sum(durations) / slot_total if slot_total > 0 else 1.0
     uniform = min(max(uniform, 1.0), args.max_speed)
@@ -89,9 +128,13 @@ def main() -> int:
 
     # Pasada 2: aplicar la velocidad uniforme; acelerar más SOLO si el
     # segmento aún desborda su presupuesto (hasta el inicio del siguiente).
+    # Banda de excepción suavizada: entre la uniforme y este techo no hay
+    # saltos bruscos de ritmo; 2x queda solo como tope absoluto.
+    exception_cap = max(uniform * 1.15, args.max_speed)
+
     with tempfile.TemporaryDirectory() as tmp:
         for i, seg in enumerate(segments, start=1):
-            wav_path = seg_dir / f"{i:04d}.wav"
+            audio = trimmed[i - 1]
             actual_s = durations[i - 1]
 
             target_s = seg["end"] - seg["start"]
@@ -103,32 +146,28 @@ def main() -> int:
 
             speed = uniform
             if actual_s / speed > budget_s + 0.02:
-                speed = actual_s / budget_s
-                if speed > args.max_speed:
+                needed = actual_s / budget_s
+                speed = min(needed, exception_cap, 2.0)
+                if needed > speed:
                     capped += 1
-                    # Exceder el cap es preferible a solapar dos voces: se
-                    # acelera lo necesario para caber antes del siguiente
-                    # segmento (con tope duro de 2x).
-                    log(f"seg {i}: requiere {speed:.2f}x > cap {args.max_speed}x "
-                        "— traducción demasiado larga, se excede el cap para "
-                        "no solapar el siguiente segmento")
-                    speed = min(speed, 2.0)
+                    log(f"seg {i}: requiere {needed:.2f}x > cap {speed:.2f}x "
+                        "— traducción demasiado larga, el desborde se trunca "
+                        "con fade en el ensamblado")
 
             if speed > 1.005:
+                in_wav = Path(tmp) / f"in_{i:04d}.wav"
                 out = Path(tmp) / f"{i:04d}.wav"
-                stretch(wav_path, out, speed)
+                sf.write(str(in_wav), audio, sr)
+                stretch(in_wav, out, speed)
                 audio, seg_sr = sf.read(str(out))
+                if audio.ndim > 1:
+                    audio = audio.mean(axis=1)
+                assert seg_sr == sr
                 stretched += 1
                 if speed > uniform:
-                    log(f"seg {i}: {actual_s:.2f}s → {len(audio) / seg_sr:.2f}s "
+                    log(f"seg {i}: {actual_s:.2f}s → {len(audio) / sr:.2f}s "
                         f"(slot {target_s:.2f}s, presupuesto {budget_s:.2f}s, "
                         f"{speed:.2f}x > uniforme)")
-            else:
-                audio, seg_sr = sf.read(str(wav_path))
-            if audio.ndim > 1:
-                audio = audio.mean(axis=1)
-            sr = sr or seg_sr
-            assert seg_sr == sr, f"samplerate inconsistente en {wav_path}"
             # Si es más corto, el silencio lo aporta el timeline (no se
             # rellena el WAV: el ensamblado coloca por timestamp).
 
@@ -136,7 +175,21 @@ def main() -> int:
 
     total_s = max(s + len(a) / sr for s, a in placed) + 0.25
     timeline = np.zeros(int(total_s * sr), dtype=np.float64)
-    for start_s, audio in placed:
+    for k, (start_s, audio) in enumerate(placed):
+        # Truncado duro anti-solapamiento: el audio nunca pasa del inicio
+        # del siguiente segmento (-30 ms); la cola se apaga con fade-out
+        # lineal de 80 ms. Dos voces sumadas es lo peor perceptualmente.
+        if k + 1 < len(placed):
+            hard_end_s = placed[k + 1][0] - 0.03
+            max_len = int((hard_end_s - start_s) * sr)
+            if 0 < max_len < len(audio):
+                audio = audio[:max_len].copy()
+                fade = min(int(0.080 * sr), len(audio))
+                if fade > 0:
+                    audio[-fade:] *= np.linspace(1.0, 0.0, fade)
+                truncated += 1
+                log(f"seg {k + 1}: truncado a {max_len / sr:.2f}s con fade "
+                    "(desbordaba el inicio del siguiente segmento)")
         i0 = int(start_s * sr)
         timeline[i0 : i0 + len(audio)] += audio
     peak = np.abs(timeline).max()
@@ -155,6 +208,8 @@ def main() -> int:
         "uniform_speed": round(uniform, 3),
         "stretched": stretched,
         "capped": capped,
+        "truncated": truncated,
+        "trimmed_silence_s": round(trimmed_total_s, 2),
         "duration_s": round(total_s, 2),
         "samplerate": sr,
     }))

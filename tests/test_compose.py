@@ -33,8 +33,8 @@ def test_align_timing_stretches_and_assembles(tmp_path):
     seg_dir = tmp_path / "05_segments"
     seg_dir.mkdir()
 
-    # seg 1: 3.0s de audio para un hueco de 2.0s → debe acelerarse 1.5x,
-    # pero el cap 1.25x lo limita (queda ~2.4s).
+    # seg 1: 3.0s de audio para un slot de 2.0s, pero su presupuesto llega
+    # hasta el inicio del seg 2 (5.0s) → cabe en el hueco sin acelerarse.
     # seg 2: 1.0s de audio para un hueco de 2.0s → se coloca tal cual.
     t1 = np.sin(2 * np.pi * 440 * np.arange(int(3.0 * sr)) / sr) * 0.5
     t2 = np.sin(2 * np.pi * 330 * np.arange(int(1.0 * sr)) / sr) * 0.5
@@ -61,13 +61,14 @@ def test_align_timing_stretches_and_assembles(tmp_path):
     )
     assert proc.returncode == 0, proc.stderr
     summary = json.loads(proc.stdout.strip().splitlines()[-1])
-    assert summary["stretched"] == 1 and summary["capped"] == 1
+    assert summary["stretched"] == 0 and summary["capped"] == 0
+    assert summary["truncated"] == 0
 
     audio, out_sr = sf.read(str(out))
     assert out_sr == sr
     # seg 2 empieza en 5.0s → el timeline dura ~6s + cola.
     assert 5.5 < len(audio) / sr < 7.0
-    # Hay señal al inicio (seg 1) y en t=5.2s (seg 2); silencio en t=4.5s.
+    # Hay señal al inicio (seg 1, ocupa 0-3s) y en t=5.2s (seg 2); silencio en t=4.5s.
     def rms(t0, t1):
         return float(np.sqrt(np.mean(np.square(audio[int(t0 * sr):int(t1 * sr)]))))
     assert rms(0.0, 1.0) > 0.1
