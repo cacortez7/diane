@@ -118,8 +118,11 @@ def _pipeline_stages() -> list[StageSpec]:
                 if (d / "00_reference.wav").exists() else []
             ),
             timeout_s=3600.0,
-            # Fish S2 Pro BF16: pesos 8.6 GB + codec 1.8 GB + KV ≈ 11 GB.
-            min_free_vram_mib=11264,
+            # Pico real medido del proceso: ~13.9 GiB (AR BF16 + KV + DAC
+            # BF16 + activaciones de decode). Con 11 GiB el guard pasaba y
+            # el OOM llegaba a mitad de carga si el escritorio retenía
+            # unas centenas de MiB (Brave/Showtime).
+            min_free_vram_mib=14336,
             # Evita OOM por fragmentación del allocator de PyTorch.
             extra_env={"PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True"},
         ),
