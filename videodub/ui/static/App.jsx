@@ -98,10 +98,22 @@ function App() {
 
   React.useEffect(() => () => { if (sse.current) sse.current.close(); clearInterval(tick.current); }, []);
 
+  // Reset parcial: limpia el pipeline/logs pero conserva las entradas
+  // (se usa al re-lanzar o al cambiar el video tras un job terminado).
   const reset = () => {
     if (sse.current) sse.current.close();
     clearInterval(tick.current);
     setPhase('idle'); setStages([]); setLogs([]); setLines([]); setElapsed(0); setJob('');
+  };
+
+  // Reset total (botón "Nuevo"): deja la app como recién cargada.
+  const fullReset = () => {
+    reset();
+    setFile(null); setRefAudio(null);
+    setInputTab('file'); setUrl(''); setFetching(false);
+    setPreset('balanced'); setBackend('gemini'); setApiKey('');
+    setTemplate('YouTube Tech/AI'); setInstructions(TEMPLATES['YouTube Tech/AI']);
+    apiJobId.current = '';
   };
 
   const apiJobId = React.useRef('');
@@ -325,7 +337,7 @@ function App() {
               {phase === 'review' ? 'En revisión…' : running ? 'Doblando…' : phase === 'done' ? 'Volver a doblar' : 'Iniciar doblaje'}
             </Button>
             {(phase === 'done' || phase === 'failed') && (
-              <Button variant="secondary" size="lg" onClick={reset} leadingIcon={<IconRefresh size={15} />}>Nuevo</Button>
+              <Button variant="secondary" size="lg" onClick={fullReset} leadingIcon={<IconRefresh size={15} />}>Nuevo</Button>
             )}
           </div>
           {needsKey && (
