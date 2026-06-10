@@ -177,18 +177,19 @@ def main() -> int:
         checkpoint_path=str(model_dir), device=device, precision=precision,
         compile=False,
     )
+    # El codec se carga en CPU, se castea a BF16 y recién entonces sube a
+    # GPU. Cargarlo FP32 directo en CUDA picaba ~1.9 GB extra con el AR ya
+    # ocupando ~13 GB — OOM en module.to(device) cuando apps de escritorio
+    # (Brave, Showtime) retienen unas centenas de MiB. Así solo tocan VRAM
+    # los pesos BF16 (~0.9 GB) y el pico de activaciones a la mitad.
     decoder = load_decoder_model(
         config_name="modded_dac_vq",
         checkpoint_path=str(model_dir / "codec.pth"),
-        device=device,
+        device="cpu",
     )
     if device == "cuda":
-        # El codec carga en FP32 (~1.8 GB de pesos y activaciones dobles).
-        # En BF16 ahorra ~0.9 GB de pesos y reduce a la mitad el pico de
-        # activaciones de encode/decode — el margen pasó de navaja (~0.3 GB)
-        # a cómodo. El engine ya corre la inferencia bajo autocast.
-        decoder = decoder.to(precision)
-        log(f"DAC convertido a {precision}")
+        decoder = decoder.to(precision).to(device)
+        log(f"DAC casteado a {precision} en CPU y movido a GPU")
     engine = TTSInferenceEngine(
         llama_queue=llama_queue, decoder_model=decoder,
         precision=precision, compile=False,
