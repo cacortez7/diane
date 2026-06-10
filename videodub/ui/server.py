@@ -353,30 +353,55 @@ def resume_job(job_id: str) -> dict:
     return {"job_id": job_id, "resumed": True}
 
 
+_ARTIFACT_MEDIA_TYPES = {
+    ".mp4": "video/mp4",
+    ".wav": "audio/wav",
+    ".srt": "text/plain; charset=utf-8",
+    ".json": "application/json",
+}
+
+
+def _artifact_dir(job_id: str) -> Path:
+    """job_dir del job en memoria, o fallback al workspace en disco.
+
+    JOBS no sobrevive reinicios del server; los artifacts en
+    workspace/<job_id>/ sí.
+    """
+    job = JOBS.get(job_id)
+    if job is not None and job.job_dir is not None:
+        return job.job_dir
+    if re.fullmatch(r"[0-9a-f]{16}", job_id):
+        candidate = WORKSPACE / job_id
+        if candidate.is_dir():
+            return candidate
+    raise HTTPException(404, "job sin outputs todavía")
+
+
 @app.get("/api/jobs/{job_id}/artifacts")
 def list_artifacts(job_id: str) -> dict:
-    job = JOBS.get(job_id)
-    if job is None or job.job_dir is None:
-        raise HTTPException(404, "job sin outputs todavía")
+    job_dir = _artifact_dir(job_id)
     files = [
         {"name": p.name, "size_bytes": p.stat().st_size}
-        for p in sorted(job.job_dir.iterdir())
+        for p in sorted(job_dir.iterdir())
         if p.name in ARTIFACT_WHITELIST
     ]
     return {"job_id": job_id, "artifacts": files}
 
 
+@app.head("/api/jobs/{job_id}/artifacts/{name}")
 @app.get("/api/jobs/{job_id}/artifacts/{name}")
-def get_artifact(job_id: str, name: str) -> FileResponse:
-    job = JOBS.get(job_id)
-    if job is None or job.job_dir is None:
-        raise HTTPException(404, "job sin outputs todavía")
+def get_artifact(job_id: str, name: str, download: bool = False) -> FileResponse:
     if name not in ARTIFACT_WHITELIST:
         raise HTTPException(403, "artefacto no permitido")
-    path = job.job_dir / name
+    path = _artifact_dir(job_id) / name
     if not path.exists():
         raise HTTPException(404, f"{name} no existe")
-    return FileResponse(path, filename=name)
+    # Inline por default para que <video> reproduzca; ?download=1 fuerza
+    # Content-Disposition: attachment para el botón de descarga.
+    media_type = _ARTIFACT_MEDIA_TYPES.get(path.suffix, "application/octet-stream")
+    if download:
+        return FileResponse(path, media_type=media_type, filename=name)
+    return FileResponse(path, media_type=media_type)
 
 
 # El frontend (React + tokens del design system) al final, para no opacar /api.
