@@ -2,7 +2,7 @@
  * Adaptado de ui_kits/diane-app/App.jsx del design system: misma estructura
  * visual, pero el runner simulado se reemplaza por POST /api/jobs + SSE. */
 const { Button, Badge, Card, SegmentedControl, RadioCards, Select, TextField, StageStep, Terminal } = window.DianeDesignSystem_fdee8c;
-const { SectionLabel, TopBar, UploadDropzone } = window;
+const { SectionLabel, TopBar, UploadDropzone, ReferenceAudio } = window;
 const { IconPlay, IconDownload, IconKey, IconTerminal, IconRefresh, IconFilm, IconLanguages } = window;
 
 const VRAM_TOTAL_FALLBACK = 16384;
@@ -26,6 +26,7 @@ const TEMPLATES = {
 };
 
 const STAGE_META = {
+  revisar_traduccion: { device: null, detail: 'revisión humana · editar líneas' },
   extract_audio:   { device: 'CPU', detail: 'FFmpeg · 16 kHz mono WAV' },
   separate_vocals: { device: 'GPU', detail: 'Demucs htdemucs_ft · vocals + instrumental' },
   transcribe:      { device: 'GPU', detail: 'WhisperX large-v3 · word-level · VAD' },
@@ -57,9 +58,11 @@ function App() {
   const [logs, setLogs] = React.useState([]);
   const [vramUsed, setVramUsed] = React.useState(0);
   const [vramTotal, setVramTotal] = React.useState(VRAM_TOTAL_FALLBACK);
-  const [phase, setPhase] = React.useState('idle');   // idle | running | done | failed
+  const [phase, setPhase] = React.useState('idle');   // idle | running | review | done | failed
   const [elapsed, setElapsed] = React.useState(0);
   const [job, setJob] = React.useState('');
+  const [refAudio, setRefAudio] = React.useState(null);
+  const [lines, setLines] = React.useState([]);       // panel de revisión
   const tick = React.useRef(null);
   const sse = React.useRef(null);
   const termWrap = React.useRef(null);
@@ -98,7 +101,46 @@ function App() {
   const reset = () => {
     if (sse.current) sse.current.close();
     clearInterval(tick.current);
-    setPhase('idle'); setStages([]); setLogs([]); setElapsed(0); setJob('');
+    setPhase('idle'); setStages([]); setLogs([]); setLines([]); setElapsed(0); setJob('');
+  };
+
+  const apiJobId = React.useRef('');
+
+  const enterReview = async () => {
+    setPhase('review');
+    setStages((prev) => prev.map((s) => s.name === 'revisar_traduccion'
+      ? { ...s, status: 'running', detail: 'esperando aprobación · editá las líneas' } : s));
+    try {
+      const r = await fetch(`/api/jobs/${apiJobId.current}/translation`);
+      const d = await r.json();
+      if (!r.ok) throw new Error(d.detail || r.statusText);
+      setLines(d.segments.map((s) => ({ ...s, original: s.text })));
+      push('warn', `traducción lista — ${d.segments.length} líneas · esperando revisión humana`);
+    } catch (e) {
+      push('error', `✗ no se pudo cargar la traducción: ${e.message || e}`);
+    }
+  };
+
+  const approve = async () => {
+    const edits = lines.filter((l) => l.text !== l.original)
+      .map((l) => ({ index: l.index, text: l.text }));
+    try {
+      if (edits.length) {
+        const r = await fetch(`/api/jobs/${apiJobId.current}/translation`, {
+          method: 'PUT', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ segments: edits }),
+        });
+        if (!r.ok) throw new Error((await r.json()).detail || r.statusText);
+      }
+      const r2 = await fetch(`/api/jobs/${apiJobId.current}/resume`, { method: 'POST' });
+      if (!r2.ok) throw new Error((await r2.json()).detail || r2.statusText);
+      push('success', `traducción aprobada — ${edits.length} línea(s) editada(s) · reanudando synthesize`);
+      setStages((prev) => prev.map((s) => s.name === 'revisar_traduccion'
+        ? { ...s, status: 'done', detail: `${lines.length} líneas aprobadas` } : s));
+      setPhase('running');
+    } catch (e) {
+      push('error', `✗ no se pudo reanudar: ${e.message || e}`);
+    }
   };
 
   const fetchUrl = async () => {
@@ -127,8 +169,16 @@ function App() {
   const onEvent = (ev) => {
     if (ev.type === 'job_start') {
       setJob(ev.job_id);
-      setStages(ev.stages.map((name) => ({ name, ...(STAGE_META[name] || {}), status: 'pending' })));
+      // Etapa virtual de revisión humana entre translate y synthesize.
+      const names = ev.stages.flatMap((n) => n === 'translate' ? ['translate', 'revisar_traduccion'] : [n]);
+      setStages(names.map((name) => ({ name, ...(STAGE_META[name] || {}), status: 'pending' })));
       push('info', `job ${ev.job_id} → workspace/${ev.job_id}`);
+    } else if (ev.type === 'review_wait') {
+      enterReview();
+    } else if (ev.type === 'review_done') {
+      setStages((prev) => prev.map((s) => s.name === 'revisar_traduccion' && s.status !== 'done'
+        ? { ...s, status: 'done' } : s));
+      setPhase('running');
     } else if (ev.type === 'stage_start') {
       setStages((prev) => prev.map((s) => s.name === ev.stage ? { ...s, status: 'running' } : s));
       push('stage', `→ etapa ${ev.stage}`);
@@ -166,6 +216,8 @@ function App() {
     form.append('preset', preset);
     form.append('backend', backend);
     form.append('instructions', instructions);
+    form.append('review', '1');
+    if (refAudio && refAudio.file) form.append('ref_audio', refAudio.file);
     if (apiKey.trim()) form.append('api_key', apiKey.trim());
 
     let resp;
@@ -182,6 +234,7 @@ function App() {
       setPhase('idle'); clearInterval(tick.current); return;
     }
     const { job_id } = await resp.json();
+    apiJobId.current = job_id;
     const es = new EventSource(`/api/jobs/${job_id}/events`);
     sse.current = es;
     es.onmessage = (m) => onEvent(JSON.parse(m.data));
@@ -189,7 +242,8 @@ function App() {
   };
 
   const needsKey = backend === 'gemini' && !hasEnvKey && !apiKey.trim();
-  const canStart = !!file && phase !== 'running' && !needsKey;
+  const busy = phase === 'running' || phase === 'review';
+  const canStart = !!file && !busy && !needsKey;
   const running = phase === 'running';
 
   return (
@@ -214,6 +268,11 @@ function App() {
                 <YoutubeInput file={file} url={url} setUrl={setUrl}
                   fetching={fetching} onFetch={fetchUrl} onClear={() => setFile(null)} />
               )}
+            </div>
+            <div style={{ marginTop: 'var(--space-5)', paddingTop: 'var(--space-5)', borderTop: '1px solid var(--border-subtle)' }}>
+              <ReferenceAudio audio={refAudio}
+                onLoad={(a) => { setRefAudio(a); if (phase === 'done') reset(); }}
+                onClear={() => setRefAudio(null)} />
             </div>
           </Card>
 
@@ -260,10 +319,10 @@ function App() {
           </Card>
 
           <div style={{ display: 'flex', gap: 'var(--space-3)' }}>
-            <Button variant="primary" size="lg" block loading={running}
+            <Button variant="primary" size="lg" block loading={busy}
               disabled={!canStart} onClick={start}
-              leadingIcon={running ? null : <IconPlay size={16} />}>
-              {running ? 'Doblando…' : phase === 'done' ? 'Volver a doblar' : 'Iniciar doblaje'}
+              leadingIcon={busy ? null : <IconPlay size={16} />}>
+              {phase === 'review' ? 'En revisión…' : running ? 'Doblando…' : phase === 'done' ? 'Volver a doblar' : 'Iniciar doblaje'}
             </Button>
             {(phase === 'done' || phase === 'failed') && (
               <Button variant="secondary" size="lg" onClick={reset} leadingIcon={<IconRefresh size={15} />}>Nuevo</Button>
@@ -280,13 +339,13 @@ function App() {
         <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-5)', position: 'sticky', top: 'var(--space-6)' }}>
           <Card title="PIPELINE" actions={
             <span style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-              {(running || phase === 'done') && (
+              {(busy || phase === 'done') && (
                 <span style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--text-muted)', fontVariantNumeric: 'tabular-nums' }}>
                   {fmtElapsed(elapsed)}
                 </span>
               )}
-              <Badge tone={phase === 'done' ? 'green' : phase === 'failed' ? 'red' : running ? 'cyan' : 'neutral'} dot pulse={running} uppercase>
-                {phase === 'done' ? 'completado' : phase === 'failed' ? 'falló' : running ? 'corriendo' : 'en espera'}
+              <Badge tone={phase === 'done' ? 'green' : phase === 'failed' ? 'red' : phase === 'review' ? 'amber' : running ? 'cyan' : 'neutral'} dot pulse={running} uppercase>
+                {phase === 'done' ? 'completado' : phase === 'failed' ? 'falló' : phase === 'review' ? 'revisión' : running ? 'corriendo' : 'en espera'}
               </Badge>
             </span>
           }>
@@ -303,6 +362,7 @@ function App() {
             )}
           </Card>
 
+          {phase === 'review' && <ReviewPanel lines={lines} setLines={setLines} onApprove={approve} backend={backend} />}
           {phase === 'done' && <PreviewCard job={job} backend={backend} />}
 
           <Card title="REGISTRO EN VIVO · stderr" flushBody terminalDots>
@@ -418,6 +478,63 @@ function PreviewCard({ job, backend }) {
         ))}
       </div>
     </Card>
+  );
+}
+
+function fmtTc(s) {
+  const ms = Math.round(s * 1000);
+  const h = Math.floor(ms / 3600000), m = Math.floor(ms / 60000) % 60,
+    sec = Math.floor(ms / 1000) % 60, mm = ms % 1000;
+  return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:${String(sec).padStart(2, '0')},${String(mm).padStart(3, '0')}`;
+}
+
+function ReviewPanel({ lines, setLines, onApprove, backend }) {
+  const edit = (i, v) => setLines((prev) => prev.map((l, j) => j === i ? { ...l, text: v } : l));
+  const edited = lines.filter((l) => l.text !== l.original).length;
+  const hdr = { fontFamily: 'var(--font-mono)', fontSize: 'var(--text-2xs)', textTransform: 'uppercase',
+    letterSpacing: 'var(--tracking-caps)', color: 'var(--text-secondary)' };
+  return (
+    <Card title="REVISAR TRADUCCIÓN" flushBody terminalDots
+      actions={<Badge tone="amber" dot uppercase>{lines.length} líneas</Badge>}>
+      <div style={{ padding: '14px 16px 12px' }}>
+        <p style={{ margin: 0, fontFamily: 'var(--font-sans)', fontSize: 12, color: 'var(--text-muted)', lineHeight: 1.5 }}>
+          Revisión humana entre <b style={{ color: 'var(--text-secondary)' }}>translate</b> y <b style={{ color: 'var(--text-secondary)' }}>synthesize</b>.
+          Editá el español antes de clonar la voz — el pipeline está en pausa.
+        </p>
+      </div>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', background: 'var(--surface-2)' }}>
+        <div style={{ ...hdr, padding: '6px 14px', borderRight: '1px solid var(--border-subtle)', borderTop: '1px solid var(--border-subtle)' }}>EN · original</div>
+        <div style={{ ...hdr, padding: '6px 14px', borderTop: '1px solid var(--border-subtle)', color: 'var(--green-bright)' }}>ES-419 · editable</div>
+      </div>
+      <div style={{ maxHeight: 300, overflowY: 'auto' }}>
+        {lines.map((l, i) => <ReviewRow key={l.index} line={l} onEdit={(v) => edit(i, v)} />)}
+      </div>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-3)', padding: 'var(--space-4)', borderTop: '1px solid var(--border-subtle)' }}>
+        <span style={{ flex: 1, minWidth: 0, fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--text-muted)' }}>
+          {edited > 0 ? `${edited} línea${edited > 1 ? 's' : ''} editada${edited > 1 ? 's' : ''}` : 'sin cambios'} · {backend === 'local' ? 'Qwen 35B' : 'Gemini'}
+        </span>
+        <Button variant="primary" size="md" onClick={onApprove} trailingIcon={<span style={{ fontSize: '1.1em' }}>→</span>}>
+          Aprobar y continuar
+        </Button>
+      </div>
+    </Card>
+  );
+}
+
+function ReviewRow({ line, onEdit }) {
+  return (
+    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', borderTop: '1px solid var(--border-subtle)' }}>
+      <div style={{ padding: '10px 14px', borderRight: '1px solid var(--border-subtle)' }}>
+        <div style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--text-faint)', marginBottom: 4 }}>{fmtTc(line.start)}</div>
+        <div style={{ fontFamily: 'var(--font-sans)', fontSize: 13, color: 'var(--text-secondary)', lineHeight: 1.45 }}>{line.source_text}</div>
+      </div>
+      <div style={{ background: 'var(--surface-inset)' }}>
+        <textarea value={line.text} onChange={(e) => onEdit(e.target.value)} rows={2} spellCheck={false}
+          style={{ width: '100%', height: '100%', minHeight: 54, resize: 'none', boxSizing: 'border-box',
+            background: 'transparent', border: 'none', outline: 'none', caretColor: 'var(--green)',
+            color: 'var(--text-primary)', fontFamily: 'var(--font-sans)', fontSize: 13, lineHeight: 1.45, padding: '10px 14px' }} />
+      </div>
+    </div>
   );
 }
 

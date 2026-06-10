@@ -104,13 +104,19 @@ def _pipeline_stages() -> list[StageSpec]:
         StageSpec(
             name="synthesize",
             script=STAGES_DIR / "synthesize.py",
-            inputs=lambda d: [d / "04_translation.json", d / "02_vocals.wav"],
+            # 00_reference.wav (voz de referencia subida) entra al hash de
+            # caché solo si existe: cambiar la referencia re-sintetiza.
+            inputs=lambda d: [d / "04_translation.json", d / "02_vocals.wav"]
+            + ([d / "00_reference.wav"] if (d / "00_reference.wav").exists() else []),
             outputs=lambda d: [d / "05_segments" / "manifest.json"],
             args=lambda d: [
                 "--translation", str(d / "04_translation.json"),
                 "--vocals", str(d / "02_vocals.wav"),
                 "--outdir", str(d / "05_segments"),
-            ],
+            ] + (
+                ["--reference", str(d / "00_reference.wav")]
+                if (d / "00_reference.wav").exists() else []
+            ),
             timeout_s=3600.0,
             # Fish S2 Pro BF16: pesos 8.6 GB + codec 1.8 GB + KV ≈ 11 GB.
             min_free_vram_mib=11264,
@@ -158,10 +164,15 @@ class Orchestrator:
         config_path: Path = Path("config/pipeline.yaml"),
         runner: StageRunner | None = None,
         on_event: Callable[[dict], None] | None = None,
+        on_review: Callable[[], None] | None = None,
     ):
         # on_event recibe dicts {"type": "stage_start"|"stage_done"|"stage_cached"
-        # |"job_done"|"error", ...} — lo usa la UI para progreso en vivo.
+        # |"review_wait"|"job_done"|"error", ...} — lo usa la UI para progreso.
         self.on_event = on_event or (lambda e: None)
+        # on_review: si está definido, el pipeline PAUSA tras translate (emite
+        # review_wait y llama esta función bloqueante). El server la usa para
+        # esperar la aprobación humana de la traducción antes de synthesize.
+        self.on_review = on_review
         self.workspace_root = workspace_root
         self.config_path = config_path
         self.config = yaml.safe_load(config_path.read_text()) if config_path.exists() else {}
@@ -193,6 +204,14 @@ class Orchestrator:
         if not source.exists():
             shutil.copy2(input_video, source)
 
+        # Audio de referencia opcional para la clonación de voz (WAV ya
+        # normalizado por la UI). Si está configurado, synthesize lo usa en
+        # vez de extraer los primeros segundos de 02_vocals.wav.
+        ref_cfg = self.config.get("tts_reference_audio")
+        if ref_cfg and Path(ref_cfg).exists():
+            shutil.copy2(ref_cfg, job_dir / "00_reference.wav")
+            logger.info("voz de referencia: %s", ref_cfg)
+
         cache = StageCache(job_dir)
         stages = _pipeline_stages()
         if until_stage:
@@ -211,6 +230,8 @@ class Orchestrator:
 
             if cache.is_fresh(spec.name, input_hash, outputs):
                 self.on_event({"type": "stage_cached", "stage": spec.name})
+                if spec.name == "translate":
+                    self._review_pause()
                 if spec.name == until_stage:
                     break
                 continue
@@ -266,11 +287,12 @@ class Orchestrator:
             cache.store(spec.name, input_hash, outputs)
             logger.info("etapa %s completada: %s", spec.name, result.summary())
 
-            if spec.name == "translate" and vram.is_available():
-                # El backend local debe matar su llama-server al salir; si
-                # quedó residente (~13.5 GB) lo detectamos y matamos AQUÍ,
-                # no recién en el vram-guard de synthesize.
-                self._kill_stray_gpu_processes()
+            if spec.name == "translate":
+                if vram.is_available():
+                    # El backend local debe matar su llama-server al salir; si
+                    # quedó residente (~13.5 GB) lo detectamos y matamos AQUÍ,
+                    # no recién en el vram-guard de synthesize.
+                    self._kill_stray_gpu_processes()
 
             self.on_event({
                 "type": "stage_done", "stage": spec.name,
@@ -280,11 +302,29 @@ class Orchestrator:
                 "summary": result.summary(),
             })
 
+            if spec.name == "translate":
+                self._review_pause()
+
             if spec.name == until_stage:
                 break
 
         self.on_event({"type": "job_done", "job_id": job_id})
         return job_dir
+
+    def _review_pause(self) -> None:
+        """Pausa para revisión humana de la traducción (si está habilitada).
+
+        Bloquea hasta que el server llame resume; el usuario puede editar
+        04_translation.{json,srt} mientras tanto — synthesize recalcula su
+        hash al reanudar, así que los cambios invalidan su caché solos.
+        """
+        if self.on_review is None:
+            return
+        logger.info("pipeline en pausa: esperando revisión de la traducción")
+        self.on_event({"type": "review_wait", "stage": "translate"})
+        self.on_review()
+        logger.info("traducción aprobada — reanudando pipeline")
+        self.on_event({"type": "review_done", "stage": "translate"})
 
     def _run_synthesize_batched(self, spec, stage_args, runner):
         """Corre synthesize en lotes de subprocesos independientes.
