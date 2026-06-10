@@ -306,8 +306,11 @@ def get_translation(job_id: str) -> dict:
 def put_translation(job_id: str, payload: dict = Body(...)) -> dict:
     """Guarda ediciones de la traducción (lista de {index, text}).
 
-    Reescribe 04_translation.{json,srt}; synthesize recalcula su hash al
-    reanudar, así que las líneas editadas invalidan su caché solas.
+    Reescribe 04_translation.{json,srt} y, para cada línea editada, borra
+    su WAV en 05_segments/ + los marcadores de caché de synthesize,
+    align_timing y compose. El hash de caché de synthesize ya cambia con
+    el JSON editado, pero el resume por WAV del batching saltaría los
+    segmentos cuyo audio viejo sigue en disco — hay que borrarlos.
     """
     job = JOBS.get(job_id)
     if job is None or job.job_dir is None:
@@ -333,9 +336,15 @@ def put_translation(job_id: str, payload: dict = Body(...)) -> dict:
         if translation.segments[idx].text != text:
             translation.segments[idx].text = text
             changed += 1
+            # WAV viejo del segmento editado (1-based en 05_segments/)
+            (job.job_dir / "05_segments" / f"{idx + 1:04d}.wav").unlink(missing_ok=True)
 
     path.write_text(translation.model_dump_json(indent=2))
     (job.job_dir / "04_translation.srt").write_text(translation.to_srt())
+    if changed:
+        (job.job_dir / "05_segments" / "manifest.json").unlink(missing_ok=True)
+        for stage in ("synthesize", "align_timing", "compose"):
+            (job.job_dir / ".cache" / f"{stage}.json").unlink(missing_ok=True)
     return {"job_id": job_id, "changed": changed}
 
 
