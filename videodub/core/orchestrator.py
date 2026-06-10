@@ -165,6 +165,7 @@ class Orchestrator:
         runner: StageRunner | None = None,
         on_event: Callable[[dict], None] | None = None,
         on_review: Callable[[], None] | None = None,
+        should_cancel: Callable[[], bool] | None = None,
     ):
         # on_event recibe dicts {"type": "stage_start"|"stage_done"|"stage_cached"
         # |"review_wait"|"job_done"|"error", ...} — lo usa la UI para progreso.
@@ -173,6 +174,10 @@ class Orchestrator:
         # review_wait y llama esta función bloqueante). El server la usa para
         # esperar la aprobación humana de la traducción antes de synthesize.
         self.on_review = on_review
+        # should_cancel: chequeado entre etapas y entre lotes de synthesize.
+        # Permite abortar un job viejo cuando el usuario lanza uno nuevo
+        # (el server serializa la GPU con un lock global).
+        self.should_cancel = should_cancel
         self.workspace_root = workspace_root
         self.config_path = config_path
         self.config = yaml.safe_load(config_path.read_text()) if config_path.exists() else {}
@@ -224,6 +229,7 @@ class Orchestrator:
         })
 
         for spec in stages:
+            self._check_cancel()
             stage_config = self._config_subset(spec.name)
             input_hash = hash_inputs(spec.inputs(job_dir), stage_config)
             outputs = spec.outputs(job_dir)
@@ -311,6 +317,10 @@ class Orchestrator:
         self.on_event({"type": "job_done", "job_id": job_id})
         return job_dir
 
+    def _check_cancel(self) -> None:
+        if self.should_cancel is not None and self.should_cancel():
+            raise StageError("job cancelado: se lanzó un doblaje nuevo")
+
     def _review_pause(self) -> None:
         """Pausa para revisión humana de la traducción (si está habilitada).
 
@@ -337,6 +347,7 @@ class Orchestrator:
         prev_remaining: int | None = None
 
         while True:
+            self._check_cancel()
             if spec.min_free_vram_mib and vram.is_available():
                 self._ensure_free_vram(spec.name, spec.min_free_vram_mib)
 
