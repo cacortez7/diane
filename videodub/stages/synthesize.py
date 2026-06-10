@@ -53,7 +53,7 @@ def log(msg: str) -> None:
 
 
 def extract_reference(
-    vocals_path: Path, segments: list[dict], min_s: float = 15.0, max_s: float = 25.0
+    vocals_path: Path, segments: list[dict], min_s: float = 10.0, max_s: float = 15.0
 ) -> tuple[bytes, str]:
     """Extrae una muestra de voz de referencia y su texto.
 
@@ -88,17 +88,46 @@ def main() -> int:
     parser.add_argument("--model-dir", default="models/tts/fish-s2-pro")
     parser.add_argument("--half", action="store_true",
                         help="FP16 en vez de BF16 (fallback de VRAM)")
-    parser.add_argument("--max-new-tokens", type=int, default=1024)
+    # ~21.5 frames/s: 512 tokens ≈ 24 s de audio por chunk — de sobra para
+    # subtítulos y acota las activaciones del decode si la generación se
+    # desboca (con 1024 un runaway decodificaba ~47 s en una pasada).
+    parser.add_argument("--max-new-tokens", type=int, default=512)
+    # OJO: generate_long exige prompt <= max_seq_len - 2048 (headroom
+    # hardcodeado upstream), así que 4096 es el mínimo práctico.
     parser.add_argument("--max-seq-len", type=int, default=4096,
                         help="límite de contexto; el default 32768 del modelo "
                              "preasigna ~5 GB de KV cache y no cabe en 16 GB "
                              "junto con los pesos BF16 + codec")
+    parser.add_argument("--max-segments", type=int, default=0,
+                        help="máximo de segmentos a sintetizar en ESTA "
+                             "invocación (0 = todos). El orquestador lo usa "
+                             "para procesar por lotes: el proceso muere entre "
+                             "lotes y el OS recupera el 100% de la VRAM, "
+                             "cortando el leak gradual del engine (~14.4→14.9 "
+                             "GB a lo largo de ~100 segmentos)")
     args = parser.parse_args()
 
     translation = json.loads(Path(args.translation).read_text())
     segments = translation["segments"]
     outdir = Path(args.outdir)
     outdir.mkdir(parents=True, exist_ok=True)
+
+    # Reanudación: los WAVs ya generados (por lotes previos o por una
+    # corrida interrumpida) se saltan — caché por segmento de facto.
+    pending = [
+        (i, seg) for i, seg in enumerate(segments, start=1)
+        if not _wav_ok(outdir / f"{i:04d}.wav")
+    ]
+    if args.max_segments > 0:
+        batch = pending[: args.max_segments]
+    else:
+        batch = pending
+    log(f"{len(segments)} segmentos: {len(segments) - len(pending)} ya en "
+        f"disco, {len(pending)} pendientes, {len(batch)} en este lote")
+
+    if not batch:
+        _write_manifest_and_summary(outdir, segments, batch_done=0)
+        return 0
 
     ref_audio, ref_text = extract_reference(Path(args.vocals), segments)
 
@@ -143,25 +172,51 @@ def main() -> int:
         checkpoint_path=str(model_dir / "codec.pth"),
         device=device,
     )
+    if device == "cuda":
+        # El codec carga en FP32 (~1.8 GB de pesos y activaciones dobles).
+        # En BF16 ahorra ~0.9 GB de pesos y reduce a la mitad el pico de
+        # activaciones de encode/decode — el margen pasó de navaja (~0.3 GB)
+        # a cómodo. El engine ya corre la inferencia bajo autocast.
+        decoder = decoder.to(precision)
+        log(f"DAC convertido a {precision}")
     engine = TTSInferenceEngine(
         llama_queue=llama_queue, decoder_model=decoder,
         precision=precision, compile=False,
     )
+
+    if device == "cuda":
+        # encode_reference corre FUERA del autocast del engine y alimenta
+        # audio fp32 al codec bf16; lo envolvemos en autocast.
+        _encode = engine.encode_reference
+
+        def _encode_autocast(*a, **kw):
+            with torch.autocast("cuda", dtype=precision):
+                return _encode(*a, **kw)
+
+        engine.encode_reference = _encode_autocast
+
     log(f"modelos cargados en {time.monotonic() - t0:.1f}s")
 
     reference = ServeReferenceAudio(audio=ref_audio, text=ref_text)
-    results, total_audio_s, total_gen_s = [], 0.0, 0.0
+    total_audio_s, total_gen_s = 0.0, 0.0
 
-    for i, seg in enumerate(segments, start=1):
+    for i, seg in batch:
         req = ServeTTSRequest(
             text=seg["text"],
             references=[reference],
             format="wav",
-            # Chunking interno de Fish: el texto se trocea cada ~200 chars
-            # antes del decode, acotando las activaciones del DAC (el OOM
-            # de modded_dac conv1d ocurre al decodificar audio largo en
-            # una sola pasada).
-            chunk_length=200,
+            # Chunking interno de Fish: el texto se trocea ANTES de generar
+            # y el DAC decodifica POR CHUNK. Las activaciones del decode
+            # escalan ~0.45 GB por segundo de audio: con 200 chars (~10-13 s)
+            # un segmento largo picaba >15.5 GB y moría en conv1d; con 120
+            # (~6-8 s por chunk) el pico queda ~14.3 GB.
+            chunk_length=120,
+            # CRÍTICO para VRAM: cachea el encode DAC de la referencia por
+            # hash. Con "off", la referencia se re-encodeaba en CADA
+            # segmento (167 encodes de 25 s en el caso que reventó) y el
+            # pico de activaciones del encoder sumado a los pesos BF16
+            # superaba los 16 GB.
+            use_memory_cache="on",
             max_new_tokens=args.max_new_tokens,
             temperature=0.7,
             top_p=0.7,
@@ -185,11 +240,6 @@ def main() -> int:
         audio_s = len(audio) / sr
         total_audio_s += audio_s
         total_gen_s += gen_s
-        results.append({
-            "index": i, "file": wav_path.name, "duration_s": round(audio_s, 3),
-            "target_duration_s": round(seg["end"] - seg["start"], 3),
-            "gen_s": round(gen_s, 2),
-        })
         peak_gb = (
             torch.cuda.max_memory_allocated() / (1024**3)
             if torch.cuda.is_available() else 0.0
@@ -207,24 +257,60 @@ def main() -> int:
         gc.collect()
 
     rtf = total_gen_s / max(total_audio_s, 0.01)
-    manifest = {
-        "n_segments": len(results),
-        "samplerate": sr,
-        "total_audio_s": round(total_audio_s, 2),
-        "total_gen_s": round(total_gen_s, 2),
-        "rtf": round(rtf, 3),
-        "segments": results,
-    }
-    (outdir / "manifest.json").write_text(json.dumps(manifest, indent=2))
-    log(f"listo: {len(results)} segmentos, RTF global={rtf:.2f}")
+    log(f"lote completado: {len(batch)} segmentos, RTF del lote={rtf:.2f}")
+    _write_manifest_and_summary(outdir, segments, batch_done=len(batch), rtf=rtf)
+    return 0
+
+
+def _wav_ok(path: Path) -> bool:
+    """True si el WAV existe y tiene contenido (44 bytes = solo header)."""
+    return path.exists() and path.stat().st_size > 1024
+
+
+def _write_manifest_and_summary(
+    outdir: Path, segments: list[dict], *, batch_done: int, rtf: float | None = None
+) -> None:
+    """Escribe el manifest SOLO cuando todos los WAVs existen.
+
+    El resumen de stdout siempre reporta el progreso; el orquestador
+    relanza el stage (nuevo subproceso → VRAM limpia) mientras
+    ``remaining > 0``.
+    """
+    remaining = [
+        i for i in range(1, len(segments) + 1)
+        if not _wav_ok(outdir / f"{i:04d}.wav")
+    ]
+    complete = not remaining
+
+    if complete:
+        import soundfile as sf
+
+        results, sr = [], None
+        for i, seg in enumerate(segments, start=1):
+            info = sf.info(str(outdir / f"{i:04d}.wav"))
+            sr = sr or info.samplerate
+            results.append({
+                "index": i, "file": f"{i:04d}.wav",
+                "duration_s": round(info.duration, 3),
+                "target_duration_s": round(seg["end"] - seg["start"], 3),
+            })
+        manifest = {
+            "n_segments": len(results),
+            "samplerate": sr,
+            "total_audio_s": round(sum(r["duration_s"] for r in results), 2),
+            "segments": results,
+        }
+        (outdir / "manifest.json").write_text(json.dumps(manifest, indent=2))
+        log(f"manifest escrito: {len(results)} segmentos completos")
 
     print(json.dumps({
         "stage": "synthesize",
         "outdir": str(outdir),
-        "n_segments": len(results),
-        "rtf": round(rtf, 3),
+        "batch_done": batch_done,
+        "remaining": len(remaining),
+        "complete": complete,
+        **({"rtf": round(rtf, 3)} if rtf is not None else {}),
     }))
-    return 0
 
 
 if __name__ == "__main__":

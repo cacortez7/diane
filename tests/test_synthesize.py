@@ -67,7 +67,8 @@ def test_synthesize_segments(tmp_path):
     assert proc.returncode == 0, proc.stderr[-3000:]
 
     summary = json.loads(proc.stdout.strip().splitlines()[-1])
-    assert summary["n_segments"] == 3
+    assert summary["batch_done"] == 3
+    assert summary["complete"] is True and summary["remaining"] == 0
 
     manifest = json.loads((outdir / "manifest.json").read_text())
     assert manifest["n_segments"] == 3

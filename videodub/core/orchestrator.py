@@ -233,10 +233,17 @@ class Orchestrator:
                 self._ensure_free_vram(spec.name, spec.min_free_vram_mib)
 
             runner = self.project_runner if spec.project_env else self.runner
-            result = runner.run(
-                spec.script, stage_args, timeout_s=spec.timeout_s,
-                extra_env=spec.extra_env,
-            )
+            if spec.name == "synthesize":
+                # Por lotes: el subproceso muere entre lotes y el OS recupera
+                # el 100% de la VRAM (el engine de Fish tiene un leak gradual
+                # ~14.4→14.9 GB a lo largo de ~100 segmentos). Los WAVs ya
+                # generados se saltan, así que reanuda donde quedó.
+                result = self._run_synthesize_batched(spec, stage_args, runner)
+            else:
+                result = runner.run(
+                    spec.script, stage_args, timeout_s=spec.timeout_s,
+                    extra_env=spec.extra_env,
+                )
             if not result.ok:
                 self.on_event({
                     "type": "error", "stage": spec.name,
@@ -278,6 +285,50 @@ class Orchestrator:
 
         self.on_event({"type": "job_done", "job_id": job_id})
         return job_dir
+
+    def _run_synthesize_batched(self, spec, stage_args, runner):
+        """Corre synthesize en lotes de subprocesos independientes.
+
+        Cada invocación sintetiza hasta ``synthesize_batch_size`` segmentos
+        pendientes y muere (VRAM a cero garantizada por el SO). Se relanza
+        hasta que el stage reporta ``complete``; si un lote no avanza, falla.
+        """
+        batch_size = int(self.config.get("synthesize_batch_size", 25))
+        prev_remaining: int | None = None
+
+        while True:
+            if spec.min_free_vram_mib and vram.is_available():
+                self._ensure_free_vram(spec.name, spec.min_free_vram_mib)
+
+            result = runner.run(
+                spec.script,
+                stage_args + ["--max-segments", str(batch_size)],
+                timeout_s=spec.timeout_s,
+                extra_env=spec.extra_env,
+            )
+            if not result.ok:
+                return result
+
+            summary = result.summary() or {}
+            remaining = int(summary.get("remaining", 0))
+            if summary.get("complete"):
+                return result
+
+            logger.info(
+                "[synthesize] lote de %s listo, faltan %d segmentos — "
+                "relanzando subproceso (VRAM limpia)",
+                summary.get("batch_done"), remaining,
+            )
+            self.on_event({
+                "type": "stage_progress", "stage": spec.name,
+                "remaining": remaining,
+            })
+            if prev_remaining is not None and remaining >= prev_remaining:
+                raise StageError(
+                    f"synthesize no avanza: {remaining} segmentos pendientes "
+                    "tras un lote completo. Revisar logs del stage."
+                )
+            prev_remaining = remaining
 
     # Patrones de procesos GPU que pertenecen al pipeline y pueden quedar
     # huérfanos (un stage que no murió limpio, un llama-server colgado).
