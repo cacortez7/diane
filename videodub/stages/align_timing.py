@@ -5,9 +5,12 @@
 """Etapa 06: alinea temporalmente los segmentos sintetizados (CPU).
 
 Para cada WAV de ``05_segments/``:
-- Si el español es más largo que el segmento original: acelera con
-  rubberband (sin cambiar pitch) hasta ``--max-speed`` (default 1.15x;
-  más rápido suena poco natural — si aún excede, se deja al cap y se loguea).
+- El presupuesto de un segmento es hasta el inicio del SIGUIENTE segmento
+  (slot del subtítulo + silencio entre subtítulos), no solo su slot.
+- Si el español excede el presupuesto: acelera con rubberband (sin cambiar
+  pitch). ``--max-speed`` (default 1.15x) es el umbral de naturalidad; si
+  hace falta más, se excede (tope duro 2x) porque solapar dos voces es
+  peor que hablar rápido.
 - Si es más corto: se rellena con silencio al final.
 
 Luego ensambla todos los segmentos en ``06_synth_aligned.wav`` colocando
@@ -76,15 +79,27 @@ def main() -> int:
             assert seg_sr == sr, f"samplerate inconsistente en {wav_path}"
 
             target_s = seg["end"] - seg["start"]
+            # Presupuesto real: hasta el inicio del siguiente segmento (el
+            # silencio entre subtítulos también es utilizable). El último
+            # segmento puede extenderse un poco más allá de su slot.
+            if i < len(segments):
+                budget_s = segments[i]["start"] - seg["start"] - 0.05
+            else:
+                budget_s = target_s + 1.0
+            budget_s = max(budget_s, target_s)
             actual_s = len(audio) / sr
 
-            if actual_s > target_s + 0.02:
-                speed = actual_s / target_s
+            if actual_s > budget_s + 0.02:
+                speed = actual_s / budget_s
                 if speed > args.max_speed:
                     capped += 1
+                    # Exceder el cap es preferible a solapar dos voces: se
+                    # acelera lo necesario para caber antes del siguiente
+                    # segmento (con tope duro de 2x).
                     log(f"seg {i}: requiere {speed:.2f}x > cap {args.max_speed}x "
-                        "— traducción demasiado larga, se aplica el cap")
-                    speed = args.max_speed
+                        "— traducción demasiado larga, se excede el cap para "
+                        "no solapar el siguiente segmento")
+                    speed = min(speed, 2.0)
                 out = Path(tmp) / f"{i:04d}.wav"
                 stretch(wav_path, out, speed)
                 audio, _ = sf.read(str(out))
@@ -92,7 +107,11 @@ def main() -> int:
                     audio = audio.mean(axis=1)
                 stretched += 1
                 log(f"seg {i}: {actual_s:.2f}s → {len(audio) / sr:.2f}s "
-                    f"(objetivo {target_s:.2f}s, {speed:.2f}x)")
+                    f"(slot {target_s:.2f}s, presupuesto {budget_s:.2f}s, {speed:.2f}x)")
+            elif actual_s > target_s + 0.02:
+                # Cabe en el presupuesto gracias al hueco — no se acelera.
+                log(f"seg {i}: {actual_s:.2f}s excede el slot ({target_s:.2f}s) "
+                    f"pero cabe en el hueco hasta el siguiente segmento")
             # Si es más corto, el silencio lo aporta el timeline (no se
             # rellena el WAV: el ensamblado coloca por timestamp).
 
