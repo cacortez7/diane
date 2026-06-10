@@ -14,3 +14,4 @@ tts_model_dir: "models/tts/fish-s2-pro"
 tts_half: false   # true = FP16 fallback si hay presión de VRAM (default BF16)
 max_speed: 1.25            # aceleración máxima en align_timing (sin cambiar pitch)
 instrumental_volume: 0.7   # volumen de la música de fondo en la mezcla final
+synthesize_batch_size: 25  # segmentos por subproceso de síntesis (anti-leak)
