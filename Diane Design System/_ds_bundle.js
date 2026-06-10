@@ -1,4 +1,4 @@
-/* @ds-bundle: {"format":3,"namespace":"DianeDesignSystem_fdee8c","components":[{"name":"Badge","sourcePath":"components/core/Badge.jsx"},{"name":"Button","sourcePath":"components/core/Button.jsx"},{"name":"Card","sourcePath":"components/core/Card.jsx"},{"name":"RadioCards","sourcePath":"components/forms/RadioCards.jsx"},{"name":"SegmentedControl","sourcePath":"components/forms/SegmentedControl.jsx"},{"name":"Select","sourcePath":"components/forms/Select.jsx"},{"name":"TextField","sourcePath":"components/forms/TextField.jsx"},{"name":"Toggle","sourcePath":"components/forms/Toggle.jsx"},{"name":"StageStep","sourcePath":"components/pipeline/StageStep.jsx"},{"name":"Terminal","sourcePath":"components/pipeline/Terminal.jsx"},{"name":"VramMeter","sourcePath":"components/pipeline/VramMeter.jsx"}],"sourceHashes":{"assets/diane-ui.preview.js":"31187e26f74e","components/core/Badge.jsx":"0b2efd2fcaee","components/core/Button.jsx":"773aacb681b7","components/core/Card.jsx":"c201fb487615","components/forms/RadioCards.jsx":"7b998c6d469c","components/forms/SegmentedControl.jsx":"7ed59bd2ba96","components/forms/Select.jsx":"7022a4707cd2","components/forms/TextField.jsx":"28e6c2ef100f","components/forms/Toggle.jsx":"f677b4b8e081","components/pipeline/StageStep.jsx":"6e62f06682e1","components/pipeline/Terminal.jsx":"8cbd80b7c20e","components/pipeline/VramMeter.jsx":"33dcc79d97a8","ui_kits/diane-app/App.jsx":"94d3a6434049","ui_kits/diane-app/icons.jsx":"383ab3884358","ui_kits/diane-app/parts.jsx":"c8d52db4fa45"},"inlinedExternals":[],"unexposedExports":[]} */
+/* @ds-bundle: {"format":3,"namespace":"DianeDesignSystem_fdee8c","components":[{"name":"Badge","sourcePath":"components/core/Badge.jsx"},{"name":"Button","sourcePath":"components/core/Button.jsx"},{"name":"Card","sourcePath":"components/core/Card.jsx"},{"name":"RadioCards","sourcePath":"components/forms/RadioCards.jsx"},{"name":"SegmentedControl","sourcePath":"components/forms/SegmentedControl.jsx"},{"name":"Select","sourcePath":"components/forms/Select.jsx"},{"name":"TextField","sourcePath":"components/forms/TextField.jsx"},{"name":"Toggle","sourcePath":"components/forms/Toggle.jsx"},{"name":"StageStep","sourcePath":"components/pipeline/StageStep.jsx"},{"name":"Terminal","sourcePath":"components/pipeline/Terminal.jsx"},{"name":"VramMeter","sourcePath":"components/pipeline/VramMeter.jsx"}],"sourceHashes":{"assets/diane-ui.preview.js":"31187e26f74e","components/core/Badge.jsx":"0b2efd2fcaee","components/core/Button.jsx":"773aacb681b7","components/core/Card.jsx":"c201fb487615","components/forms/RadioCards.jsx":"7b998c6d469c","components/forms/SegmentedControl.jsx":"7ed59bd2ba96","components/forms/Select.jsx":"7022a4707cd2","components/forms/TextField.jsx":"28e6c2ef100f","components/forms/Toggle.jsx":"f677b4b8e081","components/pipeline/StageStep.jsx":"6e62f06682e1","components/pipeline/Terminal.jsx":"8cbd80b7c20e","components/pipeline/VramMeter.jsx":"33dcc79d97a8","ui_kits/diane-app/App.jsx":"bab010abfddd","ui_kits/diane-app/icons.jsx":"383ab3884358","ui_kits/diane-app/parts.jsx":"f8e4c1f5eb84"},"inlinedExternals":[],"unexposedExports":[]} */
 
 (() => {
 
@@ -2167,7 +2167,8 @@ const {
 const {
   SectionLabel,
   TopBar,
-  UploadDropzone
+  UploadDropzone,
+  ReferenceAudio
 } = window;
 const {
   IconPlay,
@@ -2187,7 +2188,7 @@ const TEMPLATES = {
   'Documental': 'Documentary content. Rules: 1) Neutral, formal Latin American Spanish. ' + '2) Preserve technical terms when no good Spanish equivalent exists. ' + '3) Maintain the authoritative tone of the narrator. 4) Accuracy over style.',
   'Personalizado': ''
 };
-function stageDefs(preset, backend) {
+function stageDefs(preset, backend, refAudio) {
   const defs = [{
     name: 'extract_audio',
     device: 'CPU',
@@ -2224,12 +2225,20 @@ function stageDefs(preset, backend) {
     dur: '31.2s',
     detail: 'Gemini 2.5 Flash · online · free tier'
   }, {
+    name: 'revisar_traduccion',
+    device: null,
+    kind: 'review',
+    vram: IDLE_VRAM,
+    sim: 0,
+    dur: '—',
+    detail: 'revisión humana · editar líneas'
+  }, {
     name: 'synthesize',
     device: 'GPU',
     vram: 10200,
     sim: 1600,
     dur: '1m 44s',
-    detail: 'Fish S2 Pro · BF16 · voz clonada'
+    detail: refAudio ? `Fish S2 Pro · BF16 · ref ${refAudio.dur}` : 'Fish S2 Pro · BF16 · voz clonada'
   }, {
     name: 'align_timing',
     device: 'CPU',
@@ -2257,6 +2266,31 @@ function stageDefs(preset, backend) {
   }
   return defs;
 }
+const REVIEW_LINES = [{
+  tc: '00:00:04,120',
+  en: "Hi, I'm Steve Jobs, the founder of Apple.",
+  es: 'Hola, soy Stív Yobs, el fundador de Ápol.'
+}, {
+  tc: '00:00:08,640',
+  en: 'In 2005 I gave a commencement talk at Stanford.',
+  es: 'En dos mil cinco di un discurso en Stánford.'
+}, {
+  tc: '00:00:13,200',
+  en: "Your time is limited, so don't waste it.",
+  es: 'Tu tiempo es limitado, no lo desperdicies.'
+}, {
+  tc: '00:00:18,050',
+  en: 'Stay hungry, stay foolish.',
+  es: 'Sigan hambrientos, sigan alocados.'
+}, {
+  tc: '00:00:22,400',
+  en: 'The iPhone runs on iOS.',
+  es: 'El áifon funciona con ai-o-és.'
+}, {
+  tc: '00:00:27,900',
+  en: 'It changed everything in 2007.',
+  es: 'Lo cambió todo en dos mil siete.'
+}];
 function clock(base, addSec) {
   return new Date(base.getTime() + addSec * 1000).toTimeString().slice(0, 8);
 }
@@ -2276,12 +2310,22 @@ function App() {
   const [stages, setStages] = React.useState([]);
   const [logs, setLogs] = React.useState([]);
   const [vram, setVram] = React.useState(IDLE_VRAM);
-  const [phase, setPhase] = React.useState('idle'); // idle | running | done
+  const [phase, setPhase] = React.useState('idle'); // idle | running | review | done
   const [elapsed, setElapsed] = React.useState(0);
   const [job, setJob] = React.useState('');
+  const [refAudio, setRefAudio] = React.useState(null);
+  const [lines, setLines] = React.useState([]);
   const timers = React.useRef([]);
   const tick = React.useRef(null);
   const termWrap = React.useRef(null);
+  const baseRef = React.useRef(null);
+  const clockRef = React.useRef({
+    t: 0
+  });
+  const defsRef = React.useRef([]);
+  const reviewResume = React.useRef(0);
+  const accRef = React.useRef(0);
+  const t0Ref = React.useRef(0);
   const onTemplate = t => {
     setTemplate(t);
     if (t !== 'Personalizado') setInstructions(TEMPLATES[t]);
@@ -2298,11 +2342,24 @@ function App() {
     const el = termWrap.current && termWrap.current.querySelector('.dn-term');
     if (el) el.scrollTop = el.scrollHeight;
   }, [logs]);
+  const startTick = () => {
+    t0Ref.current = Date.now() - accRef.current;
+    tick.current = setInterval(() => {
+      const e = Date.now() - t0Ref.current;
+      accRef.current = e;
+      setElapsed(e);
+    }, 200);
+  };
+  const stopTick = () => {
+    clearInterval(tick.current);
+  };
   const reset = () => {
     clearAll();
+    accRef.current = 0;
     setPhase('idle');
     setStages([]);
     setLogs([]);
+    setLines([]);
     setVram(IDLE_VRAM);
     setElapsed(0);
   };
@@ -2318,33 +2375,38 @@ function App() {
     });
     if (phase === 'done') reset();
   };
-  const start = () => {
-    clearAll();
-    const defs = stageDefs(preset, backend);
-    const base = new Date('2024-01-01T14:32:01');
-    const jid = Math.random().toString(16).slice(2, 10);
-    setJob(jid);
-    setPhase('running');
-    setElapsed(0);
-    setStages(defs.map(d => ({
-      ...d,
-      status: 'pending'
-    })));
-    setLogs([{
-      ts: clock(base, 0),
-      level: 'info',
-      msg: `job **${jid}** → workspace/${jid}`
-    }, {
-      ts: clock(base, 0),
-      level: 'debug',
-      msg: `preset=${preset} · backend=${backend} · target=es-419`
-    }]);
-    const t0 = Date.now();
-    tick.current = setInterval(() => setElapsed(Date.now() - t0), 200);
-    let t = 600,
-      delay = 350;
+  const runSegment = (defs, startIdx) => {
+    const base = baseRef.current;
     const push = line => setLogs(prev => [...prev, line]);
-    defs.forEach((d, i) => {
+    let t = clockRef.current.t;
+    let delay = 300;
+    for (let i = startIdx; i < defs.length; i++) {
+      const d = defs[i];
+      if (d.kind === 'review') {
+        const di = delay,
+          tStart = t;
+        reviewResume.current = i + 1;
+        timers.current.push(setTimeout(() => {
+          setStages(prev => prev.map((s, j) => j === i ? {
+            ...s,
+            status: 'running',
+            detail: 'esperando aprobación · editá las líneas'
+          } : s));
+          stopTick();
+          push({
+            ts: clock(base, tStart),
+            level: 'warn',
+            msg: `traducción lista — ${REVIEW_LINES.length} líneas · esperando revisión humana`
+          });
+          setPhase('review');
+        }, di));
+        clockRef.current.t = t + 4;
+        return;
+      }
+      const di0 = delay,
+        di1 = delay + d.sim,
+        tStart = t,
+        tEnd = t + 4;
       timers.current.push(setTimeout(() => {
         setStages(prev => prev.map((s, j) => j === i ? {
           ...s,
@@ -2352,13 +2414,11 @@ function App() {
         } : s));
         setVram(d.vram);
         push({
-          ts: clock(base, t),
+          ts: clock(base, tStart),
           level: 'stage',
           msg: `→ etapa ${d.name} | ${d.device || 'API'} | VRAM antes: ${IDLE_VRAM} MiB`
         });
-      }, delay));
-      delay += d.sim;
-      t += 4;
+      }, di0));
       timers.current.push(setTimeout(() => {
         setStages(prev => prev.map((s, j) => j === i ? {
           ...s,
@@ -2366,26 +2426,79 @@ function App() {
         } : s));
         setVram(IDLE_VRAM);
         push({
-          ts: clock(base, t),
+          ts: clock(base, tEnd),
           level: 'success',
           msg: `← ${d.name} | rc=0 | ${d.dur} | Δ VRAM +0`
         });
-      }, delay));
-      delay += 250;
-      t += 6;
-    });
+      }, di1));
+      delay = di1 + 250;
+      t = tEnd + 6;
+    }
+    const di = delay,
+      tEnd = t;
     timers.current.push(setTimeout(() => {
-      clearInterval(tick.current);
+      stopTick();
       push({
-        ts: clock(base, t + 2),
+        ts: clock(base, tEnd + 2),
         level: 'success',
-        msg: 'listo — outputs en 07_final.mp4'
+        msg: `listo — outputs en ${preset === 'quality' ? '08_lipdub.mp4' : '07_final.mp4'}`
       });
       setPhase('done');
-    }, delay));
+    }, di));
+    clockRef.current.t = t;
+  };
+  const start = () => {
+    clearAll();
+    const defs = stageDefs(preset, backend, refAudio);
+    defsRef.current = defs;
+    baseRef.current = new Date('2024-01-01T14:32:01');
+    clockRef.current = {
+      t: 600
+    };
+    accRef.current = 0;
+    const jid = Math.random().toString(16).slice(2, 10);
+    setJob(jid);
+    setPhase('running');
+    setElapsed(0);
+    setLines(REVIEW_LINES.map(l => ({
+      ...l
+    })));
+    setStages(defs.map(d => ({
+      ...d,
+      status: 'pending'
+    })));
+    setLogs([{
+      ts: clock(baseRef.current, 0),
+      level: 'info',
+      msg: `job **${jid}** → workspace/${jid}`
+    }, {
+      ts: clock(baseRef.current, 0),
+      level: 'debug',
+      msg: `preset=${preset} · backend=${backend} · target=es-419${refAudio ? ' · voz de referencia' : ''}`
+    }]);
+    startTick();
+    runSegment(defs, 0);
+  };
+  const approve = () => {
+    const i = reviewResume.current; // synthesize index
+    setStages(prev => prev.map((s, j) => j === i - 1 ? {
+      ...s,
+      status: 'done',
+      detail: `${lines.length} líneas aprobadas`
+    } : s));
+    setLogs(prev => [...prev, {
+      ts: clock(baseRef.current, clockRef.current.t),
+      level: 'success',
+      msg: `traducción aprobada — ${lines.length} líneas · reanudando synthesize`
+    }]);
+    clockRef.current.t += 6;
+    setPhase('running');
+    startTick();
+    runSegment(defsRef.current, i);
   };
   const needsKey = backend === 'gemini' && !apiKey.trim();
-  const canStart = !!file && phase !== 'running' && !needsKey;
+  const busy = phase === 'running' || phase === 'review';
+  const canStart = !!file && !busy && !needsKey;
   const running = phase === 'running';
   return /*#__PURE__*/React.createElement("div", {
     style: {
@@ -2441,6 +2554,22 @@ function App() {
     setUrl: setUrl,
     onFetch: fetchUrl,
     onClear: () => setFile(null)
+  })), /*#__PURE__*/React.createElement("div", {
+    style: {
+      marginTop: 'var(--space-5)',
+      paddingTop: 'var(--space-5)',
+      borderTop: '1px solid var(--border-subtle)'
+    }
+  }, /*#__PURE__*/React.createElement(ReferenceAudio, {
+    audio: refAudio,
+    onLoad: () => {
+      setRefAudio({
+        name: 'ref_voice.wav',
+        dur: '18 s'
+      });
+      if (phase === 'done') reset();
+    },
+    onClear: () => setRefAudio(null)
   }))), /*#__PURE__*/React.createElement(Card, {
     title: "02 \xB7 PRESET"
   }, /*#__PURE__*/React.createElement(SegmentedControl, {
@@ -2539,13 +2668,13 @@ function App() {
     variant: "primary",
     size: "lg",
     block: true,
-    loading: running,
+    loading: busy,
     disabled: !canStart,
     onClick: start,
-    leadingIcon: running ? null : /*#__PURE__*/React.createElement(IconPlay, {
+    leadingIcon: busy ? null : /*#__PURE__*/React.createElement(IconPlay, {
       size: 16
     })
-  }, running ? 'Doblando…' : phase === 'done' ? 'Volver a doblar' : 'Iniciar doblaje'), phase === 'done' && /*#__PURE__*/React.createElement(Button, {
+  }, phase === 'review' ? 'En revisión…' : running ? 'Doblando…' : phase === 'done' ? 'Volver a doblar' : 'Iniciar doblaje'), phase === 'done' && /*#__PURE__*/React.createElement(Button, {
     variant: "secondary",
     size: "lg",
     onClick: reset,
@@ -2575,7 +2704,7 @@ function App() {
         alignItems: 'center',
         gap: 8
       }
-    }, (running || phase === 'done') && /*#__PURE__*/React.createElement("span", {
+    }, (busy || phase === 'done') && /*#__PURE__*/React.createElement("span", {
       style: {
         fontFamily: 'var(--font-mono)',
         fontSize: 11,
@@ -2583,11 +2712,11 @@ function App() {
         fontVariantNumeric: 'tabular-nums'
       }
     }, fmtElapsed(elapsed)), /*#__PURE__*/React.createElement(Badge, {
-      tone: phase === 'done' ? 'green' : running ? 'cyan' : 'neutral',
+      tone: phase === 'done' ? 'green' : phase === 'review' ? 'amber' : running ? 'cyan' : 'neutral',
       dot: true,
       pulse: running,
       uppercase: true
-    }, phase === 'done' ? 'completado' : running ? 'corriendo' : 'en espera'))
+    }, phase === 'done' ? 'completado' : phase === 'review' ? 'revisión' : running ? 'corriendo' : 'en espera'))
   }, stages.length === 0 ? /*#__PURE__*/React.createElement(EmptyRun, {
     file: file
   }) : /*#__PURE__*/React.createElement("div", {
@@ -2604,7 +2733,12 @@ function App() {
     status: s.status,
     detail: s.detail,
     duration: s.status === 'done' ? s.dur : null
-  })))), phase === 'done' && /*#__PURE__*/React.createElement(PreviewCard, {
+  })))), phase === 'review' && /*#__PURE__*/React.createElement(ReviewPanel, {
+    lines: lines,
+    setLines: setLines,
+    onApprove: approve,
+    backend: backend
+  }), phase === 'done' && /*#__PURE__*/React.createElement(PreviewCard, {
     job: job,
     preset: preset,
     backend: backend
@@ -2952,6 +3086,165 @@ function ArtifactChip({
     size: 13
   }));
 }
+function ReviewPanel({
+  lines,
+  setLines,
+  onApprove,
+  backend
+}) {
+  const edit = (i, v) => setLines(prev => prev.map((l, j) => j === i ? {
+    ...l,
+    es: v
+  } : l));
+  const edited = lines.filter((l, i) => REVIEW_LINES[i] && l.es !== REVIEW_LINES[i].es).length;
+  const hdr = {
+    fontFamily: 'var(--font-mono)',
+    fontSize: 'var(--text-2xs)',
+    textTransform: 'uppercase',
+    letterSpacing: 'var(--tracking-caps)',
+    color: 'var(--text-secondary)'
+  };
+  return /*#__PURE__*/React.createElement(Card, {
+    title: "REVISAR TRADUCCI\xD3N",
+    flushBody: true,
+    terminalDots: true,
+    actions: /*#__PURE__*/React.createElement(Badge, {
+      tone: "amber",
+      dot: true,
+      uppercase: true
+    }, lines.length, " l\xEDneas")
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      padding: '14px 16px 12px'
+    }
+  }, /*#__PURE__*/React.createElement("p", {
+    style: {
+      margin: 0,
+      fontFamily: 'var(--font-sans)',
+      fontSize: 12,
+      color: 'var(--text-muted)',
+      lineHeight: 1.5
+    }
+  }, "Revisi\xF3n humana entre ", /*#__PURE__*/React.createElement("b", {
+    style: {
+      color: 'var(--text-secondary)'
+    }
+  }, "translate"), " y ", /*#__PURE__*/React.createElement("b", {
+    style: {
+      color: 'var(--text-secondary)'
+    }
+  }, "synthesize"), ". Edit\xE1 el espa\xF1ol antes de clonar la voz \u2014 el pipeline est\xE1 en pausa.")), /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: 'grid',
+      gridTemplateColumns: '1fr 1fr',
+      background: 'var(--surface-2)'
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      ...hdr,
+      padding: '6px 14px',
+      borderRight: '1px solid var(--border-subtle)',
+      borderTop: '1px solid var(--border-subtle)'
+    }
+  }, "EN \xB7 original"), /*#__PURE__*/React.createElement("div", {
+    style: {
+      ...hdr,
+      padding: '6px 14px',
+      borderTop: '1px solid var(--border-subtle)',
+      color: 'var(--green-bright)'
+    }
+  }, "ES-419 \xB7 editable")), /*#__PURE__*/React.createElement("div", {
+    style: {
+      maxHeight: 300,
+      overflowY: 'auto'
+    }
+  }, lines.map((l, i) => /*#__PURE__*/React.createElement(ReviewRow, {
+    key: i,
+    line: l,
+    onEdit: v => edit(i, v)
+  }))), /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: 'flex',
+      alignItems: 'center',
+      gap: 'var(--space-3)',
+      padding: 'var(--space-4)',
+      borderTop: '1px solid var(--border-subtle)'
+    }
+  }, /*#__PURE__*/React.createElement("span", {
+    style: {
+      flex: 1,
+      minWidth: 0,
+      fontFamily: 'var(--font-mono)',
+      fontSize: 11,
+      color: 'var(--text-muted)'
+    }
+  }, edited > 0 ? `${edited} línea${edited > 1 ? 's' : ''} editada${edited > 1 ? 's' : ''}` : 'sin cambios', " \xB7 ", backend === 'local' ? 'Qwen 35B' : 'Gemini'), /*#__PURE__*/React.createElement(Button, {
+    variant: "primary",
+    size: "md",
+    onClick: onApprove,
+    trailingIcon: /*#__PURE__*/React.createElement("span", {
+      style: {
+        fontSize: '1.1em'
+      }
+    }, "\u2192")
+  }, "Aprobar y continuar")));
+}
+function ReviewRow({
+  line,
+  onEdit
+}) {
+  return /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: 'grid',
+      gridTemplateColumns: '1fr 1fr',
+      borderTop: '1px solid var(--border-subtle)'
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      padding: '10px 14px',
+      borderRight: '1px solid var(--border-subtle)'
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontFamily: 'var(--font-mono)',
+      fontSize: 10,
+      color: 'var(--text-faint)',
+      marginBottom: 4
+    }
+  }, line.tc), /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontFamily: 'var(--font-sans)',
+      fontSize: 13,
+      color: 'var(--text-secondary)',
+      lineHeight: 1.45
+    }
+  }, line.en)), /*#__PURE__*/React.createElement("div", {
+    style: {
+      background: 'var(--surface-inset)'
+    }
+  }, /*#__PURE__*/React.createElement("textarea", {
+    value: line.es,
+    onChange: e => onEdit(e.target.value),
+    rows: 2,
+    spellCheck: false,
+    style: {
+      width: '100%',
+      height: '100%',
+      minHeight: 54,
+      resize: 'none',
+      boxSizing: 'border-box',
+      background: 'transparent',
+      border: 'none',
+      outline: 'none',
+      caretColor: 'var(--green)',
+      color: 'var(--text-primary)',
+      fontFamily: 'var(--font-sans)',
+      fontSize: 13,
+      lineHeight: 1.45,
+      padding: '10px 14px'
+    }
+  })));
+}
 window.DianeApp = App;
 })(); } catch (e) { __ds_ns.__errors.push({ path: "ui_kits/diane-app/App.jsx", error: String((e && e.message) || e) }); }
 
@@ -3087,7 +3380,8 @@ const {
 } = window.DianeDesignSystem_fdee8c;
 const {
   IconUpload,
-  IconFilm
+  IconFilm,
+  IconWaveform
 } = window;
 function SectionLabel({
   children,
@@ -3248,10 +3542,160 @@ function UploadDropzone({
     }
   }, "o clic para seleccionar \xB7 H.264 recomendado")));
 }
+function Waveform({
+  bars = 60,
+  height = 34
+}) {
+  const hs = [];
+  for (let i = 0; i < bars; i++) {
+    const v = Math.abs(Math.sin(i * 0.5) * Math.cos(i * 0.13) + 0.16 * Math.sin(i * 1.9));
+    hs.push(0.16 + 0.84 * Math.min(1, v));
+  }
+  return /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: 'flex',
+      alignItems: 'center',
+      gap: 2,
+      height
+    }
+  }, hs.map((h, i) => /*#__PURE__*/React.createElement("span", {
+    key: i,
+    style: {
+      flex: 1,
+      height: `${Math.round(h * 100)}%`,
+      background: 'var(--green)',
+      opacity: 0.45 + 0.55 * h,
+      borderRadius: 1
+    }
+  })));
+}
+function ReferenceAudio({
+  audio,
+  onLoad,
+  onClear
+}) {
+  if (audio) {
+    return /*#__PURE__*/React.createElement("div", {
+      style: {
+        display: 'flex',
+        flexDirection: 'column',
+        gap: 8
+      }
+    }, /*#__PURE__*/React.createElement(SectionLabel, {
+      hint: `${audio.dur} · zero-shot`
+    }, "Audio de referencia"), /*#__PURE__*/React.createElement("div", {
+      style: {
+        background: 'var(--green-deep)',
+        border: '1px solid var(--green-dim)',
+        borderRadius: 'var(--radius-md)',
+        padding: '12px 14px'
+      }
+    }, /*#__PURE__*/React.createElement("div", {
+      style: {
+        display: 'flex',
+        alignItems: 'center',
+        gap: 10,
+        marginBottom: 10
+      }
+    }, /*#__PURE__*/React.createElement("span", {
+      style: {
+        color: 'var(--green)',
+        display: 'grid',
+        placeItems: 'center'
+      }
+    }, /*#__PURE__*/React.createElement(IconWaveform, {
+      size: 18
+    })), /*#__PURE__*/React.createElement("span", {
+      style: {
+        flex: 1,
+        minWidth: 0,
+        fontFamily: 'var(--font-mono)',
+        fontSize: 13,
+        color: 'var(--green-bright)'
+      }
+    }, audio.name), /*#__PURE__*/React.createElement("span", {
+      style: {
+        fontFamily: 'var(--font-mono)',
+        fontSize: 11,
+        color: 'var(--text-muted)'
+      }
+    }, audio.dur), /*#__PURE__*/React.createElement("button", {
+      type: "button",
+      onClick: onClear,
+      "aria-label": "Quitar",
+      style: {
+        cursor: 'pointer',
+        background: 'transparent',
+        border: 'none',
+        color: 'var(--text-muted)',
+        fontFamily: 'var(--font-mono)',
+        fontSize: 14,
+        lineHeight: 1,
+        padding: 2
+      }
+    }, "\u2715")), /*#__PURE__*/React.createElement(Waveform, null)));
+  }
+  return /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: 'flex',
+      flexDirection: 'column',
+      gap: 8
+    }
+  }, /*#__PURE__*/React.createElement(SectionLabel, {
+    hint: "WAV/MP3 \xB7 15\u201325 s"
+  }, "Audio de referencia"), /*#__PURE__*/React.createElement("button", {
+    type: "button",
+    onClick: onLoad,
+    style: {
+      width: '100%',
+      textAlign: 'left',
+      cursor: 'pointer',
+      display: 'flex',
+      alignItems: 'center',
+      gap: 'var(--space-3)',
+      padding: '12px 14px',
+      background: 'var(--surface-inset)',
+      border: '1px dashed var(--border-strong)',
+      borderRadius: 'var(--radius-md)',
+      color: 'var(--text-secondary)',
+      transition: 'border-color var(--dur-fast), background var(--dur-fast)'
+    }
+  }, /*#__PURE__*/React.createElement("span", {
+    style: {
+      color: 'var(--text-muted)',
+      display: 'grid',
+      placeItems: 'center'
+    }
+  }, /*#__PURE__*/React.createElement(IconWaveform, {
+    size: 22
+  })), /*#__PURE__*/React.createElement("span", {
+    style: {
+      display: 'flex',
+      flexDirection: 'column',
+      gap: 2,
+      minWidth: 0
+    }
+  }, /*#__PURE__*/React.createElement("span", {
+    style: {
+      fontFamily: 'var(--font-mono)',
+      fontSize: 13,
+      color: 'var(--text-primary)'
+    }
+  }, "Voz de referencia (opcional)"), /*#__PURE__*/React.createElement("span", {
+    style: {
+      fontFamily: 'var(--font-sans)',
+      fontSize: 11,
+      color: 'var(--text-muted)',
+      lineHeight: 1.45
+    }
+  }, "si no se carga, se usa el audio original del video"))));
+}
 Object.assign(window, {
   SectionLabel,
   TopBar,
-  UploadDropzone
+  UploadDropzone,
+  ReferenceAudio,
+  Waveform
 });
 })(); } catch (e) { __ds_ns.__errors.push({ path: "ui_kits/diane-app/parts.jsx", error: String((e && e.message) || e) }); }
 

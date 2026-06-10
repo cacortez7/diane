@@ -1,6 +1,6 @@
 /* Diane app — layout parts: TopBar, UploadDropzone, SectionLabel. Exported to window. */
 const { Badge, VramMeter } = window.DianeDesignSystem_fdee8c;
-const { IconUpload, IconFilm } = window;
+const { IconUpload, IconFilm, IconWaveform } = window;
 
 function SectionLabel({ children, hint }) {
   return (
@@ -86,4 +86,73 @@ function UploadDropzone({ file, onPick }) {
   );
 }
 
-Object.assign(window, { SectionLabel, TopBar, UploadDropzone });
+function Waveform({ bars = 60, height = 34 }) {
+  const hs = [];
+  for (let i = 0; i < bars; i++) {
+    const v = Math.abs(Math.sin(i * 0.5) * Math.cos(i * 0.13) + 0.16 * Math.sin(i * 1.9));
+    hs.push(0.16 + 0.84 * Math.min(1, v));
+  }
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 2, height }}>
+      {hs.map((h, i) => (
+        <span key={i} style={{ flex: 1, height: `${Math.round(h * 100)}%`, background: 'var(--green)', opacity: 0.45 + 0.55 * h, borderRadius: 1 }} />
+      ))}
+    </div>
+  );
+}
+
+function ReferenceAudio({ audio, onLoad, onClear }) {
+  const inputRef = React.useRef(null);
+  const onFile = (e) => {
+    const f = e.target.files && e.target.files[0];
+    if (f) {
+      const url = URL.createObjectURL(f);
+      const el = new Audio(url);
+      el.onloadedmetadata = () => {
+        onLoad({ file: f, name: f.name, dur: `${Math.round(el.duration)} s` });
+        URL.revokeObjectURL(url);
+      };
+      el.onerror = () => { onLoad({ file: f, name: f.name, dur: '' }); URL.revokeObjectURL(url); };
+    }
+    e.target.value = '';
+  };
+  const picker = (
+    <input ref={inputRef} type="file" accept="audio/wav,audio/mpeg,audio/*" style={{ display: 'none' }} onChange={onFile} />
+  );
+  if (audio) {
+    return (
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+        {picker}
+        <SectionLabel hint={`${audio.dur} · zero-shot`}>Audio de referencia</SectionLabel>
+        <div style={{ background: 'var(--green-deep)', border: '1px solid var(--green-dim)', borderRadius: 'var(--radius-md)', padding: '12px 14px' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 10 }}>
+            <span style={{ color: 'var(--green)', display: 'grid', placeItems: 'center' }}><IconWaveform size={18} /></span>
+            <span style={{ flex: 1, minWidth: 0, fontFamily: 'var(--font-mono)', fontSize: 13, color: 'var(--green-bright)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{audio.name}</span>
+            <span style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--text-muted)' }}>{audio.dur}</span>
+            <button type="button" onClick={onClear} aria-label="Quitar" style={{ cursor: 'pointer', background: 'transparent', border: 'none', color: 'var(--text-muted)', fontFamily: 'var(--font-mono)', fontSize: 14, lineHeight: 1, padding: 2 }}>✕</button>
+          </div>
+          <Waveform />
+        </div>
+      </div>
+    );
+  }
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+      {picker}
+      <SectionLabel hint="WAV/MP3 · 15–25 s">Audio de referencia</SectionLabel>
+      <button type="button" onClick={() => inputRef.current && inputRef.current.click()} style={{
+        width: '100%', textAlign: 'left', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 'var(--space-3)',
+        padding: '12px 14px', background: 'var(--surface-inset)', border: '1px dashed var(--border-strong)',
+        borderRadius: 'var(--radius-md)', color: 'var(--text-secondary)',
+        transition: 'border-color var(--dur-fast), background var(--dur-fast)' }}>
+        <span style={{ color: 'var(--text-muted)', display: 'grid', placeItems: 'center' }}><IconWaveform size={22} /></span>
+        <span style={{ display: 'flex', flexDirection: 'column', gap: 2, minWidth: 0 }}>
+          <span style={{ fontFamily: 'var(--font-mono)', fontSize: 13, color: 'var(--text-primary)' }}>Voz de referencia (opcional)</span>
+          <span style={{ fontFamily: 'var(--font-sans)', fontSize: 11, color: 'var(--text-muted)', lineHeight: 1.45 }}>si no se carga, se usa el audio original del video</span>
+        </span>
+      </button>
+    </div>
+  );
+}
+
+Object.assign(window, { SectionLabel, TopBar, UploadDropzone, ReferenceAudio, Waveform });

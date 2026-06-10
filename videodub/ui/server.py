@@ -61,6 +61,10 @@ class Job:
     cond: threading.Condition = field(default_factory=threading.Condition)
     job_dir: Path | None = None
     status: str = "running"  # running | done | failed
+    # Revisión humana de la traducción: el orquestador bloquea en
+    # review_event.wait() y POST /resume lo libera.
+    review_event: threading.Event | None = None
+    in_review: bool = False
 
 
 JOBS: dict[str, Job] = {}
@@ -139,6 +143,8 @@ async def create_job(
     instructions: str = Form(""),
     api_key: str = Form(""),
     until_stage: str = Form(""),
+    ref_audio: UploadFile | None = File(None),
+    review: str = Form(""),
 ) -> dict:
     if preset not in PRESET_UNTIL:
         raise HTTPException(400, f"preset desconocido: {preset}")
@@ -171,6 +177,27 @@ async def create_job(
     config["translation_backend"] = backend
     if instructions.strip():
         config["translation_description"] = instructions.strip()
+
+    # Voz de referencia opcional: se normaliza a WAV mono 44.1 kHz (≤25 s)
+    # y synthesize la usa en vez de extraerla del video.
+    if ref_audio is not None:
+        import shutil as _shutil
+        import subprocess
+
+        raw = uploads / f"{upload_id}_ref_raw"
+        with raw.open("wb") as fh:
+            while chunk := await ref_audio.read(1 << 20):
+                fh.write(chunk)
+        ref_wav = uploads / f"{upload_id}_ref.wav"
+        proc = subprocess.run(
+            [_shutil.which("ffmpeg"), "-y", "-v", "error", "-i", str(raw),
+             "-t", "25", "-ac", "1", "-ar", "44100", str(ref_wav)],
+            capture_output=True, text=True,
+        )
+        raw.unlink(missing_ok=True)
+        if proc.returncode != 0 or not ref_wav.exists():
+            raise HTTPException(400, f"audio de referencia inválido: {proc.stderr[-200:]}")
+        config["tts_reference_audio"] = str(ref_wav)
     config_path = uploads / f"{upload_id}.yaml"
     config_path.write_text(yaml.safe_dump(config, allow_unicode=True))
 
@@ -179,18 +206,34 @@ async def create_job(
         os.environ["GEMINI_API_KEY"] = api_key
 
     job = Job(id=upload_id)
+    want_review = review.lower() in ("1", "true", "yes", "on")
+    if want_review:
+        job.review_event = threading.Event()
     JOBS[upload_id] = job
     until = until_stage or PRESET_UNTIL[preset]
 
     def emit(event: dict) -> None:
+        if event.get("type") == "job_start":
+            # El job_id del orquestador (hash del video) define el job_dir;
+            # lo necesitamos ANTES de que run() retorne para GET /translation.
+            job.job_dir = WORKSPACE / event["job_id"]
+        elif event.get("type") == "review_wait":
+            job.in_review = True
+        elif event.get("type") == "review_done":
+            job.in_review = False
         with job.cond:
             job.events.append(event)
             job.cond.notify_all()
 
+    def wait_review() -> None:
+        job.review_event.wait()
+        job.review_event.clear()
+
     def run() -> None:
         try:
             orch = Orchestrator(
-                workspace_root=WORKSPACE, config_path=config_path, on_event=emit
+                workspace_root=WORKSPACE, config_path=config_path, on_event=emit,
+                on_review=wait_review if want_review else None,
             )
             job.job_dir = orch.run(video_path, until_stage=until)
             status = "done"
@@ -232,6 +275,82 @@ def job_events(job_id: str) -> StreamingResponse:
                 return
 
     return StreamingResponse(stream(), media_type="text/event-stream")
+
+
+@app.get("/api/jobs/{job_id}/translation")
+def get_translation(job_id: str) -> dict:
+    """Líneas de la traducción para el panel de revisión."""
+    job = JOBS.get(job_id)
+    if job is None or job.job_dir is None:
+        raise HTTPException(404, "job no encontrado")
+    path = job.job_dir / "04_translation.json"
+    if not path.exists():
+        raise HTTPException(409, "la traducción aún no existe")
+
+    from videodub.schemas.translation import Translation
+
+    translation = Translation.model_validate_json(path.read_text())
+    return {
+        "job_id": job_id,
+        "in_review": job.in_review,
+        "backend": translation.backend_used,
+        "segments": [
+            {"index": i, "start": s.start, "end": s.end,
+             "source_text": s.source_text, "text": s.text}
+            for i, s in enumerate(translation.segments)
+        ],
+    }
+
+
+@app.put("/api/jobs/{job_id}/translation")
+def put_translation(job_id: str, payload: dict = Body(...)) -> dict:
+    """Guarda ediciones de la traducción (lista de {index, text}).
+
+    Reescribe 04_translation.{json,srt}; synthesize recalcula su hash al
+    reanudar, así que las líneas editadas invalidan su caché solas.
+    """
+    job = JOBS.get(job_id)
+    if job is None or job.job_dir is None:
+        raise HTTPException(404, "job no encontrado")
+    path = job.job_dir / "04_translation.json"
+    if not path.exists():
+        raise HTTPException(409, "la traducción aún no existe")
+
+    from videodub.schemas.translation import Translation
+
+    translation = Translation.model_validate_json(path.read_text())
+    edits = payload.get("segments", [])
+    changed = 0
+    for edit in edits:
+        try:
+            idx, text = int(edit["index"]), str(edit["text"])
+        except (KeyError, TypeError, ValueError):
+            raise HTTPException(400, f"edición inválida: {edit}")
+        if not (0 <= idx < len(translation.segments)):
+            raise HTTPException(400, f"index fuera de rango: {idx}")
+        if not text.strip():
+            raise HTTPException(400, f"línea {idx}: el texto no puede quedar vacío")
+        if translation.segments[idx].text != text:
+            translation.segments[idx].text = text
+            changed += 1
+
+    path.write_text(translation.model_dump_json(indent=2))
+    (job.job_dir / "04_translation.srt").write_text(translation.to_srt())
+    return {"job_id": job_id, "changed": changed}
+
+
+@app.post("/api/jobs/{job_id}/resume")
+def resume_job(job_id: str) -> dict:
+    """Aprueba la traducción y reanuda el pipeline (synthesize en adelante)."""
+    job = JOBS.get(job_id)
+    if job is None:
+        raise HTTPException(404, "job no encontrado")
+    if job.review_event is None:
+        raise HTTPException(409, "este job no tiene revisión habilitada")
+    if not job.in_review:
+        raise HTTPException(409, "el job no está esperando revisión")
+    job.review_event.set()
+    return {"job_id": job_id, "resumed": True}
 
 
 @app.get("/api/jobs/{job_id}/artifacts")

@@ -98,6 +98,11 @@ def main() -> int:
                         help="límite de contexto; el default 32768 del modelo "
                              "preasigna ~5 GB de KV cache y no cabe en 16 GB "
                              "junto con los pesos BF16 + codec")
+    parser.add_argument("--reference", default=None,
+                        help="WAV opcional con la voz de referencia (15-25 s). "
+                             "Si no se pasa, se extrae de --vocals. Nota: al "
+                             "no tener transcript, la referencia subida se usa "
+                             "sin prompt-text (clonación solo acústica).")
     parser.add_argument("--max-segments", type=int, default=0,
                         help="máximo de segmentos a sintetizar en ESTA "
                              "invocación (0 = todos). El orquestador lo usa "
@@ -129,7 +134,12 @@ def main() -> int:
         _write_manifest_and_summary(outdir, segments, batch_done=0)
         return 0
 
-    ref_audio, ref_text = extract_reference(Path(args.vocals), segments)
+    if args.reference:
+        ref_audio = Path(args.reference).read_bytes()
+        ref_text = ""  # sin transcript de la referencia subida
+        log(f"voz de referencia externa: {args.reference}")
+    else:
+        ref_audio, ref_text = extract_reference(Path(args.vocals), segments)
 
     import soundfile as sf
     import torch

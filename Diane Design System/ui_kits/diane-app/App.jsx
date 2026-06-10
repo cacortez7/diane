@@ -1,6 +1,6 @@
 /* Diane app — main view: config panel + live run panel + fake pipeline runner. */
 const { Button, Badge, Card, SegmentedControl, RadioCards, Select, TextField, StageStep, Terminal, VramMeter } = window.DianeDesignSystem_fdee8c;
-const { SectionLabel, TopBar, UploadDropzone } = window;
+const { SectionLabel, TopBar, UploadDropzone, ReferenceAudio } = window;
 const { IconPlay, IconPause, IconDownload, IconKey, IconTerminal, IconRefresh, IconFilm, IconLanguages } = window;
 
 const IDLE_VRAM = 412;
@@ -24,7 +24,7 @@ const TEMPLATES = {
   'Personalizado': '',
 };
 
-function stageDefs(preset, backend) {
+function stageDefs(preset, backend, refAudio) {
   const defs = [
     { name: 'extract_audio',   device: 'CPU', vram: IDLE_VRAM, sim: 700,  dur: '1.1s',   detail: 'FFmpeg · 16 kHz mono WAV' },
     { name: 'separate_vocals', device: 'GPU', vram: 3100,      sim: 1200, dur: '8.4s',   detail: 'Demucs htdemucs_ft · vocals + instrumental' },
@@ -32,7 +32,8 @@ function stageDefs(preset, backend) {
     backend === 'local'
       ? { name: 'translate',   device: 'GPU', vram: 13800,     sim: 1700, dur: '46.8s',  detail: 'Qwen 35B · -ngl 24 · ventana 8' }
       : { name: 'translate',   device: null,  vram: IDLE_VRAM, sim: 1400, dur: '31.2s',  detail: 'Gemini 2.5 Flash · online · free tier' },
-    { name: 'synthesize',      device: 'GPU', vram: 10200,     sim: 1600, dur: '1m 44s', detail: 'Fish S2 Pro · BF16 · voz clonada' },
+    { name: 'revisar_traduccion', device: null, kind: 'review', vram: IDLE_VRAM, sim: 0, dur: '—', detail: 'revisión humana · editar líneas' },
+    { name: 'synthesize',      device: 'GPU', vram: 10200,     sim: 1600, dur: '1m 44s', detail: refAudio ? `Fish S2 Pro · BF16 · ref ${refAudio.dur}` : 'Fish S2 Pro · BF16 · voz clonada' },
     { name: 'align_timing',    device: 'CPU', vram: IDLE_VRAM, sim: 600,  dur: '2.3s',   detail: 'rubberband · cap 1.25x · sin cambiar pitch' },
     { name: 'compose',         device: 'CPU', vram: IDLE_VRAM, sim: 800,  dur: '3.0s',   detail: 'voz 100% + instrumental 70% · -c:v copy' },
   ];
@@ -41,6 +42,15 @@ function stageDefs(preset, backend) {
   }
   return defs;
 }
+
+const REVIEW_LINES = [
+  { tc: '00:00:04,120', en: "Hi, I'm Steve Jobs, the founder of Apple.", es: 'Hola, soy Stív Yobs, el fundador de Ápol.' },
+  { tc: '00:00:08,640', en: 'In 2005 I gave a commencement talk at Stanford.', es: 'En dos mil cinco di un discurso en Stánford.' },
+  { tc: '00:00:13,200', en: "Your time is limited, so don't waste it.", es: 'Tu tiempo es limitado, no lo desperdicies.' },
+  { tc: '00:00:18,050', en: 'Stay hungry, stay foolish.', es: 'Sigan hambrientos, sigan alocados.' },
+  { tc: '00:00:22,400', en: 'The iPhone runs on iOS.', es: 'El áifon funciona con ai-o-és.' },
+  { tc: '00:00:27,900', en: 'It changed everything in 2007.', es: 'Lo cambió todo en dos mil siete.' },
+];
 
 function clock(base, addSec) {
   return new Date(base.getTime() + addSec * 1000).toTimeString().slice(0, 8);
@@ -62,12 +72,20 @@ function App() {
   const [stages, setStages] = React.useState([]);
   const [logs, setLogs] = React.useState([]);
   const [vram, setVram] = React.useState(IDLE_VRAM);
-  const [phase, setPhase] = React.useState('idle');   // idle | running | done
+  const [phase, setPhase] = React.useState('idle');   // idle | running | review | done
   const [elapsed, setElapsed] = React.useState(0);
   const [job, setJob] = React.useState('');
+  const [refAudio, setRefAudio] = React.useState(null);
+  const [lines, setLines] = React.useState([]);
   const timers = React.useRef([]);
   const tick = React.useRef(null);
   const termWrap = React.useRef(null);
+  const baseRef = React.useRef(null);
+  const clockRef = React.useRef({ t: 0 });
+  const defsRef = React.useRef([]);
+  const reviewResume = React.useRef(0);
+  const accRef = React.useRef(0);
+  const t0Ref = React.useRef(0);
 
   const onTemplate = (t) => { setTemplate(t); if (t !== 'Personalizado') setInstructions(TEMPLATES[t]); };
 
@@ -80,7 +98,16 @@ function App() {
     if (el) el.scrollTop = el.scrollHeight;
   }, [logs]);
 
-  const reset = () => { clearAll(); setPhase('idle'); setStages([]); setLogs([]); setVram(IDLE_VRAM); setElapsed(0); };
+  const startTick = () => {
+    t0Ref.current = Date.now() - accRef.current;
+    tick.current = setInterval(() => { const e = Date.now() - t0Ref.current; accRef.current = e; setElapsed(e); }, 200);
+  };
+  const stopTick = () => { clearInterval(tick.current); };
+
+  const reset = () => {
+    clearAll(); accRef.current = 0;
+    setPhase('idle'); setStages([]); setLogs([]); setLines([]); setVram(IDLE_VRAM); setElapsed(0);
+  };
 
   const fetchUrl = () => {
     if (!url.trim()) return;
@@ -89,46 +116,79 @@ function App() {
     if (phase === 'done') reset();
   };
 
-  const start = () => {
-    clearAll();
-    const defs = stageDefs(preset, backend);
-    const base = new Date('2024-01-01T14:32:01');
-    const jid = Math.random().toString(16).slice(2, 10);
-    setJob(jid); setPhase('running'); setElapsed(0);
-    setStages(defs.map((d) => ({ ...d, status: 'pending' })));
-    setLogs([
-      { ts: clock(base, 0), level: 'info', msg: `job **${jid}** → workspace/${jid}` },
-      { ts: clock(base, 0), level: 'debug', msg: `preset=${preset} · backend=${backend} · target=es-419` },
-    ]);
-
-    const t0 = Date.now();
-    tick.current = setInterval(() => setElapsed(Date.now() - t0), 200);
-
-    let t = 600, delay = 350;
+  const runSegment = (defs, startIdx) => {
+    const base = baseRef.current;
     const push = (line) => setLogs((prev) => [...prev, line]);
-    defs.forEach((d, i) => {
+    let t = clockRef.current.t;
+    let delay = 300;
+    for (let i = startIdx; i < defs.length; i++) {
+      const d = defs[i];
+      if (d.kind === 'review') {
+        const di = delay, tStart = t;
+        reviewResume.current = i + 1;
+        timers.current.push(setTimeout(() => {
+          setStages((prev) => prev.map((s, j) => j === i ? { ...s, status: 'running', detail: 'esperando aprobación · editá las líneas' } : s));
+          stopTick();
+          push({ ts: clock(base, tStart), level: 'warn', msg: `traducción lista — ${REVIEW_LINES.length} líneas · esperando revisión humana` });
+          setPhase('review');
+        }, di));
+        clockRef.current.t = t + 4;
+        return;
+      }
+      const di0 = delay, di1 = delay + d.sim, tStart = t, tEnd = t + 4;
       timers.current.push(setTimeout(() => {
         setStages((prev) => prev.map((s, j) => j === i ? { ...s, status: 'running' } : s));
         setVram(d.vram);
-        push({ ts: clock(base, t), level: 'stage', msg: `→ etapa ${d.name} | ${d.device || 'API'} | VRAM antes: ${IDLE_VRAM} MiB` });
-      }, delay));
-      delay += d.sim; t += 4;
+        push({ ts: clock(base, tStart), level: 'stage', msg: `→ etapa ${d.name} | ${d.device || 'API'} | VRAM antes: ${IDLE_VRAM} MiB` });
+      }, di0));
       timers.current.push(setTimeout(() => {
         setStages((prev) => prev.map((s, j) => j === i ? { ...s, status: 'done' } : s));
         setVram(IDLE_VRAM);
-        push({ ts: clock(base, t), level: 'success', msg: `← ${d.name} | rc=0 | ${d.dur} | Δ VRAM +0` });
-      }, delay));
-      delay += 250; t += 6;
-    });
+        push({ ts: clock(base, tEnd), level: 'success', msg: `← ${d.name} | rc=0 | ${d.dur} | Δ VRAM +0` });
+      }, di1));
+      delay = di1 + 250; t = tEnd + 6;
+    }
+    const di = delay, tEnd = t;
     timers.current.push(setTimeout(() => {
-      clearInterval(tick.current);
-      push({ ts: clock(base, t + 2), level: 'success', msg: 'listo — outputs en 07_final.mp4' });
+      stopTick();
+      push({ ts: clock(base, tEnd + 2), level: 'success', msg: `listo — outputs en ${preset === 'quality' ? '08_lipdub.mp4' : '07_final.mp4'}` });
       setPhase('done');
-    }, delay));
+    }, di));
+    clockRef.current.t = t;
+  };
+
+  const start = () => {
+    clearAll();
+    const defs = stageDefs(preset, backend, refAudio);
+    defsRef.current = defs;
+    baseRef.current = new Date('2024-01-01T14:32:01');
+    clockRef.current = { t: 600 };
+    accRef.current = 0;
+    const jid = Math.random().toString(16).slice(2, 10);
+    setJob(jid); setPhase('running'); setElapsed(0);
+    setLines(REVIEW_LINES.map((l) => ({ ...l })));
+    setStages(defs.map((d) => ({ ...d, status: 'pending' })));
+    setLogs([
+      { ts: clock(baseRef.current, 0), level: 'info', msg: `job **${jid}** → workspace/${jid}` },
+      { ts: clock(baseRef.current, 0), level: 'debug', msg: `preset=${preset} · backend=${backend} · target=es-419${refAudio ? ' · voz de referencia' : ''}` },
+    ]);
+    startTick();
+    runSegment(defs, 0);
+  };
+
+  const approve = () => {
+    const i = reviewResume.current;   // synthesize index
+    setStages((prev) => prev.map((s, j) => j === i - 1 ? { ...s, status: 'done', detail: `${lines.length} líneas aprobadas` } : s));
+    setLogs((prev) => [...prev, { ts: clock(baseRef.current, clockRef.current.t), level: 'success', msg: `traducción aprobada — ${lines.length} líneas · reanudando synthesize` }]);
+    clockRef.current.t += 6;
+    setPhase('running');
+    startTick();
+    runSegment(defsRef.current, i);
   };
 
   const needsKey = backend === 'gemini' && !apiKey.trim();
-  const canStart = !!file && phase !== 'running' && !needsKey;
+  const busy = phase === 'running' || phase === 'review';
+  const canStart = !!file && !busy && !needsKey;
   const running = phase === 'running';
 
   return (
@@ -152,6 +212,11 @@ function App() {
               ) : (
                 <YoutubeInput file={file} url={url} setUrl={setUrl} onFetch={fetchUrl} onClear={() => setFile(null)} />
               )}
+            </div>
+            <div style={{ marginTop: 'var(--space-5)', paddingTop: 'var(--space-5)', borderTop: '1px solid var(--border-subtle)' }}>
+              <ReferenceAudio audio={refAudio}
+                onLoad={() => { setRefAudio({ name: 'ref_voice.wav', dur: '18 s' }); if (phase === 'done') reset(); }}
+                onClear={() => setRefAudio(null)} />
             </div>
           </Card>
 
@@ -198,10 +263,10 @@ function App() {
           </Card>
 
           <div style={{ display: 'flex', gap: 'var(--space-3)' }}>
-            <Button variant="primary" size="lg" block loading={running}
+            <Button variant="primary" size="lg" block loading={busy}
               disabled={!canStart} onClick={start}
-              leadingIcon={running ? null : <IconPlay size={16} />}>
-              {running ? 'Doblando…' : phase === 'done' ? 'Volver a doblar' : 'Iniciar doblaje'}
+              leadingIcon={busy ? null : <IconPlay size={16} />}>
+              {phase === 'review' ? 'En revisión…' : running ? 'Doblando…' : phase === 'done' ? 'Volver a doblar' : 'Iniciar doblaje'}
             </Button>
             {phase === 'done' && (
               <Button variant="secondary" size="lg" onClick={reset} leadingIcon={<IconRefresh size={15} />}>Nuevo</Button>
@@ -218,13 +283,13 @@ function App() {
         <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-5)', position: 'sticky', top: 'var(--space-6)' }}>
           <Card title="PIPELINE" actions={
             <span style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-              {(running || phase === 'done') && (
+              {(busy || phase === 'done') && (
                 <span style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--text-muted)', fontVariantNumeric: 'tabular-nums' }}>
                   {fmtElapsed(elapsed)}
                 </span>
               )}
-              <Badge tone={phase === 'done' ? 'green' : running ? 'cyan' : 'neutral'} dot pulse={running} uppercase>
-                {phase === 'done' ? 'completado' : running ? 'corriendo' : 'en espera'}
+              <Badge tone={phase === 'done' ? 'green' : phase === 'review' ? 'amber' : running ? 'cyan' : 'neutral'} dot pulse={running} uppercase>
+                {phase === 'done' ? 'completado' : phase === 'review' ? 'revisión' : running ? 'corriendo' : 'en espera'}
               </Badge>
             </span>
           }>
@@ -240,6 +305,7 @@ function App() {
             )}
           </Card>
 
+          {phase === 'review' && <ReviewPanel lines={lines} setLines={setLines} onApprove={approve} backend={backend} />}
           {phase === 'done' && <PreviewCard job={job} preset={preset} backend={backend} />}
 
           <Card title="REGISTRO EN VIVO · stderr" flushBody terminalDots>
@@ -380,6 +446,56 @@ function ArtifactChip({ name, tag }) {
       <span style={{ color: 'var(--text-faint)' }}>· {tag}</span>
       <IconDownload size={13} />
     </button>
+  );
+}
+
+function ReviewPanel({ lines, setLines, onApprove, backend }) {
+  const edit = (i, v) => setLines((prev) => prev.map((l, j) => j === i ? { ...l, es: v } : l));
+  const edited = lines.filter((l, i) => REVIEW_LINES[i] && l.es !== REVIEW_LINES[i].es).length;
+  const hdr = { fontFamily: 'var(--font-mono)', fontSize: 'var(--text-2xs)', textTransform: 'uppercase',
+    letterSpacing: 'var(--tracking-caps)', color: 'var(--text-secondary)' };
+  return (
+    <Card title="REVISAR TRADUCCIÓN" flushBody terminalDots
+      actions={<Badge tone="amber" dot uppercase>{lines.length} líneas</Badge>}>
+      <div style={{ padding: '14px 16px 12px' }}>
+        <p style={{ margin: 0, fontFamily: 'var(--font-sans)', fontSize: 12, color: 'var(--text-muted)', lineHeight: 1.5 }}>
+          Revisión humana entre <b style={{ color: 'var(--text-secondary)' }}>translate</b> y <b style={{ color: 'var(--text-secondary)' }}>synthesize</b>.
+          Editá el español antes de clonar la voz — el pipeline está en pausa.
+        </p>
+      </div>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', background: 'var(--surface-2)' }}>
+        <div style={{ ...hdr, padding: '6px 14px', borderRight: '1px solid var(--border-subtle)', borderTop: '1px solid var(--border-subtle)' }}>EN · original</div>
+        <div style={{ ...hdr, padding: '6px 14px', borderTop: '1px solid var(--border-subtle)', color: 'var(--green-bright)' }}>ES-419 · editable</div>
+      </div>
+      <div style={{ maxHeight: 300, overflowY: 'auto' }}>
+        {lines.map((l, i) => <ReviewRow key={i} line={l} onEdit={(v) => edit(i, v)} />)}
+      </div>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-3)', padding: 'var(--space-4)', borderTop: '1px solid var(--border-subtle)' }}>
+        <span style={{ flex: 1, minWidth: 0, fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--text-muted)' }}>
+          {edited > 0 ? `${edited} línea${edited > 1 ? 's' : ''} editada${edited > 1 ? 's' : ''}` : 'sin cambios'} · {backend === 'local' ? 'Qwen 35B' : 'Gemini'}
+        </span>
+        <Button variant="primary" size="md" onClick={onApprove} trailingIcon={<span style={{ fontSize: '1.1em' }}>→</span>}>
+          Aprobar y continuar
+        </Button>
+      </div>
+    </Card>
+  );
+}
+
+function ReviewRow({ line, onEdit }) {
+  return (
+    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', borderTop: '1px solid var(--border-subtle)' }}>
+      <div style={{ padding: '10px 14px', borderRight: '1px solid var(--border-subtle)' }}>
+        <div style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--text-faint)', marginBottom: 4 }}>{line.tc}</div>
+        <div style={{ fontFamily: 'var(--font-sans)', fontSize: 13, color: 'var(--text-secondary)', lineHeight: 1.45 }}>{line.en}</div>
+      </div>
+      <div style={{ background: 'var(--surface-inset)' }}>
+        <textarea value={line.es} onChange={(e) => onEdit(e.target.value)} rows={2} spellCheck={false}
+          style={{ width: '100%', height: '100%', minHeight: 54, resize: 'none', boxSizing: 'border-box',
+            background: 'transparent', border: 'none', outline: 'none', caretColor: 'var(--green)',
+            color: 'var(--text-primary)', fontFamily: 'var(--font-sans)', fontSize: 13, lineHeight: 1.45, padding: '10px 14px' }} />
+      </div>
+    </div>
   );
 }
 

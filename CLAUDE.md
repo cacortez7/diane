@@ -631,6 +631,23 @@ y plantillas de instrucciones personalizables.
 - Validado end-to-end vía HTTP: upload del fixture + backend local →
   SSE con todas las etapas → descarga de `07_final.mp4` (200, 10 s).
 - `quality` preset aún mapea a `compose`; cambiará a `lipdub` en M7.
+- **Audio de referencia** (post-M6): campo opcional en `01 · ENTRADA`
+  (WAV/MP3 15-25 s). El server lo normaliza con ffmpeg a WAV mono 44.1 kHz
+  (cap 25 s) y lo pasa vía `tts_reference_audio` en el config del job; el
+  orquestador lo copia a `00_reference.wav` (entra al hash de caché de
+  synthesize) y el stage lo usa con `--reference` en vez de extraer la voz
+  de `02_vocals.wav`. Limitación: la referencia subida no tiene transcript,
+  se clona sin prompt-text.
+- **Revisión de traducción** (post-M6): pausa humana entre translate y
+  synthesize. El orquestador acepta `on_review` (bloqueante) y emite
+  `review_wait`/`review_done`; el server expone
+  `GET/PUT /api/jobs/{id}/translation` (PUT reescribe json+srt —
+  synthesize recalcula su hash al reanudar, las ediciones invalidan su
+  caché solas) y `POST /api/jobs/{id}/resume`. La UI muestra el panel
+  EN/ES editable (etapa virtual `revisar_traduccion`). Se habilita con el
+  form field `review=1` (la UI siempre lo manda; el CLI no pausa).
+  ⚠ PENDIENTE: `test_review_flow` cuelga bajo TestClient (posible
+  deadlock SSE/portal); está marcado skip — validar contra uvicorn real.
 - **Entrada por URL de YouTube** (post-M6): tab "Subir archivo / URL de
   YouTube" en `01 · ENTRADA` (diseño del design system actualizado).
   `POST /api/download-url` descarga con yt-dlp (formato mp4 H.264 para
