@@ -489,9 +489,21 @@ function fmtTc(s) {
   return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:${String(sec).padStart(2, '0')},${String(mm).padStart(3, '0')}`;
 }
 
+// Validador de lip sync: estima la duración del ES hablado (~15 chars/s,
+// ritmo de Fish S2 en español) contra el slot disponible del subtítulo.
+// ≤1.10 ok · 1.10–1.30 rubberband lo maneja · >1.30 requiere edición.
+const ES_CHARS_PER_SEC = 15;
+function fitRatio(line) {
+  const slot = line.end - line.start;
+  if (!(slot > 0)) return 0;
+  return (line.text.trim().length / ES_CHARS_PER_SEC) / slot;
+}
+const fitLevel = (r) => (r > 1.3 ? 'red' : r > 1.1 ? 'amber' : 'ok');
+
 function ReviewPanel({ lines, setLines, onApprove, backend }) {
   const edit = (i, v) => setLines((prev) => prev.map((l, j) => j === i ? { ...l, text: v } : l));
   const edited = lines.filter((l) => l.text !== l.original).length;
+  const reds = lines.filter((l) => fitLevel(fitRatio(l)) === 'red').length;
   const hdr = { fontFamily: 'var(--font-mono)', fontSize: 'var(--text-2xs)', textTransform: 'uppercase',
     letterSpacing: 'var(--tracking-caps)', color: 'var(--text-secondary)' };
   return (
@@ -514,6 +526,11 @@ function ReviewPanel({ lines, setLines, onApprove, backend }) {
         <span style={{ flex: 1, minWidth: 0, fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--text-muted)' }}>
           {edited > 0 ? `${edited} línea${edited > 1 ? 's' : ''} editada${edited > 1 ? 's' : ''}` : 'sin cambios'} · {backend === 'local' ? 'Qwen 35B' : 'Gemini'}
         </span>
+        {reds > 0 && (
+          <span style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--red, #e5484d)', whiteSpace: 'nowrap' }}>
+            ⚠ {reds} línea{reds > 1 ? 's' : ''} demasiado larga{reds > 1 ? 's' : ''} para su slot
+          </span>
+        )}
         <Button variant="primary" size="md" onClick={onApprove} trailingIcon={<span style={{ fontSize: '1.1em' }}>→</span>}>
           Aprobar y continuar
         </Button>
@@ -522,14 +539,31 @@ function ReviewPanel({ lines, setLines, onApprove, backend }) {
   );
 }
 
+const FIT_STYLES = {
+  ok:    { bg: 'transparent',            edge: 'transparent',           label: null },
+  amber: { bg: 'rgba(240,180,41,0.07)',  edge: 'var(--amber, #f0b429)', label: 'rubberband' },
+  red:   { bg: 'rgba(229,72,77,0.10)',   edge: 'var(--red, #e5484d)',   label: 'muy larga' },
+};
+
 function ReviewRow({ line, onEdit }) {
+  const ratio = fitRatio(line);
+  const fit = FIT_STYLES[fitLevel(ratio)];
   return (
     <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', borderTop: '1px solid var(--border-subtle)' }}>
       <div style={{ padding: '10px 14px', borderRight: '1px solid var(--border-subtle)' }}>
         <div style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--text-faint)', marginBottom: 4 }}>{fmtTc(line.start)}</div>
         <div style={{ fontFamily: 'var(--font-sans)', fontSize: 13, color: 'var(--text-secondary)', lineHeight: 1.45 }}>{line.source_text}</div>
       </div>
-      <div style={{ background: 'var(--surface-inset)' }}>
+      <div style={{ position: 'relative', background: fit.bg !== 'transparent' ? fit.bg : 'var(--surface-inset)',
+        boxShadow: fit.edge !== 'transparent' ? `inset 3px 0 0 ${fit.edge}` : 'none',
+        transition: 'background var(--dur-fast), box-shadow var(--dur-fast)' }}>
+        {fit.label && (
+          <span style={{ position: 'absolute', top: 6, right: 10, pointerEvents: 'none',
+            fontFamily: 'var(--font-mono)', fontSize: 9, textTransform: 'uppercase',
+            letterSpacing: 'var(--tracking-caps)', color: fit.edge }}>
+            {fit.label} · {Math.round(ratio * 100)}%
+          </span>
+        )}
         <textarea value={line.text} onChange={(e) => onEdit(e.target.value)} rows={2} spellCheck={false}
           style={{ width: '100%', height: '100%', minHeight: 54, resize: 'none', boxSizing: 'border-box',
             background: 'transparent', border: 'none', outline: 'none', caretColor: 'var(--green)',

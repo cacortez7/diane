@@ -4,14 +4,19 @@
 # ///
 """Etapa 06: alinea temporalmente los segmentos sintetizados (CPU).
 
-Para cada WAV de ``05_segments/``:
-- El presupuesto de un segmento es hasta el inicio del SIGUIENTE segmento
-  (slot del subtítulo + silencio entre subtítulos), no solo su slot.
-- Si el español excede el presupuesto: acelera con rubberband (sin cambiar
-  pitch). ``--max-speed`` (default 1.15x) es el umbral de naturalidad; si
-  hace falta más, se excede (tope duro 2x) porque solapar dos voces es
-  peor que hablar rápido.
-- Si es más corto: se rellena con silencio al final.
+Estrategia de velocidad UNIFORME: se calcula un ratio global (duración
+total del audio ES / duración total de los slots EN) y esa velocidad se
+aplica a TODOS los segmentos, en vez de ajustar cada uno por separado —
+elimina variaciones bruscas de ritmo entre segmentos. La velocidad
+uniforme se acota a [1.0, --max-speed].
+
+Corrección por segmento solo como excepción: el presupuesto de un
+segmento llega hasta el inicio del SIGUIENTE (slot + silencio entre
+subtítulos). Si con la velocidad uniforme el audio aún desborda su
+presupuesto, ese segmento se acelera lo necesario (tope duro 2x) porque
+solapar dos voces es peor que hablar rápido.
+
+Si es más corto que el slot: el silencio lo aporta el timeline.
 
 Luego ensambla todos los segmentos en ``06_synth_aligned.wav`` colocando
 cada uno en su timestamp original.
@@ -69,27 +74,35 @@ def main() -> int:
     sr = None
     placed, stretched, capped = [], 0, 0
 
+    # Pasada 1: medir duraciones para calcular la velocidad uniforme global.
+    durations, slot_total = [], 0.0
+    for i, seg in enumerate(segments, start=1):
+        info = sf.info(str(seg_dir / f"{i:04d}.wav"))
+        durations.append(info.frames / info.samplerate)
+        slot_total += seg["end"] - seg["start"]
+
+    uniform = sum(durations) / slot_total if slot_total > 0 else 1.0
+    uniform = min(max(uniform, 1.0), args.max_speed)
+    log(f"velocidad uniforme global: {uniform:.3f}x "
+        f"(audio ES {sum(durations):.1f}s / slots EN {slot_total:.1f}s, "
+        f"cap {args.max_speed}x)")
+
+    # Pasada 2: aplicar la velocidad uniforme; acelerar más SOLO si el
+    # segmento aún desborda su presupuesto (hasta el inicio del siguiente).
     with tempfile.TemporaryDirectory() as tmp:
         for i, seg in enumerate(segments, start=1):
             wav_path = seg_dir / f"{i:04d}.wav"
-            audio, seg_sr = sf.read(str(wav_path))
-            if audio.ndim > 1:
-                audio = audio.mean(axis=1)
-            sr = sr or seg_sr
-            assert seg_sr == sr, f"samplerate inconsistente en {wav_path}"
+            actual_s = durations[i - 1]
 
             target_s = seg["end"] - seg["start"]
-            # Presupuesto real: hasta el inicio del siguiente segmento (el
-            # silencio entre subtítulos también es utilizable). El último
-            # segmento puede extenderse un poco más allá de su slot.
             if i < len(segments):
                 budget_s = segments[i]["start"] - seg["start"] - 0.05
             else:
                 budget_s = target_s + 1.0
             budget_s = max(budget_s, target_s)
-            actual_s = len(audio) / sr
 
-            if actual_s > budget_s + 0.02:
+            speed = uniform
+            if actual_s / speed > budget_s + 0.02:
                 speed = actual_s / budget_s
                 if speed > args.max_speed:
                     capped += 1
@@ -100,18 +113,22 @@ def main() -> int:
                         "— traducción demasiado larga, se excede el cap para "
                         "no solapar el siguiente segmento")
                     speed = min(speed, 2.0)
+
+            if speed > 1.005:
                 out = Path(tmp) / f"{i:04d}.wav"
                 stretch(wav_path, out, speed)
-                audio, _ = sf.read(str(out))
-                if audio.ndim > 1:
-                    audio = audio.mean(axis=1)
+                audio, seg_sr = sf.read(str(out))
                 stretched += 1
-                log(f"seg {i}: {actual_s:.2f}s → {len(audio) / sr:.2f}s "
-                    f"(slot {target_s:.2f}s, presupuesto {budget_s:.2f}s, {speed:.2f}x)")
-            elif actual_s > target_s + 0.02:
-                # Cabe en el presupuesto gracias al hueco — no se acelera.
-                log(f"seg {i}: {actual_s:.2f}s excede el slot ({target_s:.2f}s) "
-                    f"pero cabe en el hueco hasta el siguiente segmento")
+                if speed > uniform:
+                    log(f"seg {i}: {actual_s:.2f}s → {len(audio) / seg_sr:.2f}s "
+                        f"(slot {target_s:.2f}s, presupuesto {budget_s:.2f}s, "
+                        f"{speed:.2f}x > uniforme)")
+            else:
+                audio, seg_sr = sf.read(str(wav_path))
+            if audio.ndim > 1:
+                audio = audio.mean(axis=1)
+            sr = sr or seg_sr
+            assert seg_sr == sr, f"samplerate inconsistente en {wav_path}"
             # Si es más corto, el silencio lo aporta el timeline (no se
             # rellena el WAV: el ensamblado coloca por timestamp).
 
@@ -135,6 +152,7 @@ def main() -> int:
         "stage": "align_timing",
         "output": str(out),
         "n_segments": len(placed),
+        "uniform_speed": round(uniform, 3),
         "stretched": stretched,
         "capped": capped,
         "duration_s": round(total_s, 2),
