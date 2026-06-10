@@ -14,6 +14,15 @@ const TEMPLATES = {
     '3) Write English proper nouns phonetically in Spanish (Apple=Ápol, Stanford=Stánford, Steve=Stív, Jobs=Yobs, iOS=ai-o-és). ' +
     '4) Keep each subtitle SHORT and CONCISE, Spanish must not exceed original English duration. ' +
     '5) Never translate proper names, write them phonetically instead.',
+  'YouTube Tech/AI (experimental)':
+    'YouTube tech/AI speech. Rules: 1) Informal Latin American Spanish, never Spain Spanish. ' +
+    '2) Convert ALL numbers to words (17=diecisiete, 2005=dos mil cinco). ' +
+    '3) Write English proper nouns phonetically in Spanish (Apple=Ápol, Stanford=Stánford, Steve=Stív, Jobs=Yobs, iOS=ai-o-és). ' +
+    '4) Never translate proper names, write them phonetically instead. ' +
+    '5) CRITICAL — Lip sync adaptation: Count the syllables of each English line and write the ' +
+    'Spanish translation with the SAME syllable count (±2). Prefer synonyms, contractions, or ' +
+    'restructured phrases over literal translation. The Spanish audio must feel natural at the ' +
+    'same speed as the English original — never too fast, never too slow.',
   'Entretenimiento':
     'Entertainment content. Rules: 1) Casual, natural Latin American Spanish. ' +
     '2) Preserve humor and tone of the original. 3) Keep subtitles concise and natural-sounding. ' +
