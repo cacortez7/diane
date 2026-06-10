@@ -54,10 +54,18 @@ if ! health_ok; then
 fi
 
 # Navegadores con modo app (el proceso vive mientras la ventana exista).
+# Brave (snap) primero: es el navegador del usuario. El perfil dedicado
+# (--user-data-dir) garantiza un proceso propio aunque el navegador ya
+# esté abierto; para el snap debe vivir bajo ~/snap/brave (confinamiento).
+if [ -x /snap/bin/brave ]; then
+  /snap/bin/brave --app="$URL" \
+    --user-data-dir="$HOME/snap/brave/common/diane-app" >/dev/null 2>&1
+  exit 0   # ventana cerrada → trap mata el server
+fi
 for browser in google-chrome chromium chromium-browser brave-browser microsoft-edge; do
   if command -v "$browser" >/dev/null 2>&1; then
     "$browser" --app="$URL" --user-data-dir="$HOME/.cache/diane-app" >/dev/null 2>&1
-    exit 0   # ventana cerrada → trap mata el server
+    exit 0
   fi
 done
 
