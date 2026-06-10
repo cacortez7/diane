@@ -6,7 +6,7 @@
 
 Para cada WAV de ``05_segments/``:
 - Si el español es más largo que el segmento original: acelera con
-  rubberband (sin cambiar pitch) hasta ``--max-speed`` (default 1.25x;
+  rubberband (sin cambiar pitch) hasta ``--max-speed`` (default 1.15x;
   más rápido suena poco natural — si aún excede, se deja al cap y se loguea).
 - Si es más corto: se rellena con silencio al final.
 
@@ -52,7 +52,7 @@ def main() -> int:
     parser.add_argument("--segments-dir", required=True, help="05_segments/")
     parser.add_argument("--translation", required=True, help="04_translation.json")
     parser.add_argument("--output", required=True, help="06_synth_aligned.wav")
-    parser.add_argument("--max-speed", type=float, default=1.25,
+    parser.add_argument("--max-speed", type=float, default=1.15,
                         help="aceleración máxima antes de sonar poco natural")
     args = parser.parse_args()
 
