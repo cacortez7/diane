@@ -17,10 +17,11 @@ synthesize_batch_size: 25  # unidades por subproceso de síntesis (anti-leak)
 
 # --- Síntesis por oraciones (synthesize) ---
 synth_seed: 42                 # misma seed para todo el job (prosodia reproducible)
-synth_temperature: 0.8
-synth_top_p: 0.8
+synth_temperature: 0.7         # 0.8 (calibrado S1-mini) alucinaba idiomas en S2 Pro
+synth_top_p: 0.7
 synth_repetition_penalty: 1.1
-synth_max_new_tokens: 1024
+synth_max_new_tokens: 1024     # cap efectivo por unidad: min(esto, max(128, chars*8))
+synth_text_padding: false      # prefijo ". " (solo S1-mini; en S2 Pro alucina)
 synth_trim_threshold_db: -45   # trim de silencio SOLO al final de cada WAV
 synth_trim_max_ms: 500
 merge_gap_ms: 1000             # gap máximo entre subtítulos para fusionar en oración

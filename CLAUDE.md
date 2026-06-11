@@ -605,9 +605,12 @@ hardware objetivo. Decisiones tomadas:
     al re-correr se invalidan solo los WAVs de unidades cambiadas (la
     re-síntesis parcial del flujo de revisión sigue funcionando; el server
     ya NO borra WAVs por índice). WAVs sin units.json = job pre-rediseño
-    → se descartan todos. Inferencia: prefijo ". " (arranque estable),
-    parámetros fijos temperature 0.8 / top_p 0.8 / repetition_penalty 1.1
-    / max_new_tokens 1024, seed fija por job (`synth_seed`, 42). Trim de
+    → se descartan todos. Inferencia (hotfix S2 Pro 2026-06-11: los
+    valores calibrados para S1-mini alucinaban idiomas/runaways):
+    temperature 0.7 / top_p 0.7 / repetition_penalty 1.1, cap de tokens
+    por longitud `min(synth_max_new_tokens, max(128, chars*8))`, prefijo
+    ". " solo con `synth_text_padding: true` (default false; útil si se
+    prueba S1-mini), seed fija por job (`synth_seed`, 42). Trim de
     silencio SOLO al final de cada WAV (−45 dB, ventanas 10 ms, máx
     500 ms, solo si hay >50 ms); el inicio nunca se toca.
   - **align_timing**: ensamblado con cursor — cada unidad se coloca en

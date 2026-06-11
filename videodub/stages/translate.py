@@ -58,6 +58,9 @@ def translate_gemini(
     gst.model_name = config.get("gemini_model", "gemini-2.5-flash")
     gst.description = config.get("translation_description", "")
     gst.free_quota = True  # respeta límites del tier gratuito; NO desactivar
+    # Sin esto, la librería pregunta por TTY si quiere auto-actualizarse
+    # cuando hay versión nueva en PyPI — bloquea el subproceso del stage.
+    gst.skip_upgrade = True
     gst.thinking = True
     gst.progress_log = True
     gst.translate()
