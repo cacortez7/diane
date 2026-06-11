@@ -28,29 +28,33 @@ needs_ffmpeg = pytest.mark.skipif(shutil.which("ffmpeg") is None, reason="sin ff
 
 
 @needs_ffmpeg
-def test_align_timing_stretches_and_assembles(tmp_path):
+def test_align_timing_places_units_with_cursor(tmp_path):
     sr = 44100
     seg_dir = tmp_path / "05_segments"
     seg_dir.mkdir()
 
-    # seg 1: 3.0s de audio para un slot de 2.0s, pero su presupuesto llega
-    # hasta el inicio del seg 2 (5.0s) → cabe en el hueco sin acelerarse.
-    # seg 2: 1.0s de audio para un hueco de 2.0s → se coloca tal cual.
+    # unidad 1: 3.0s de audio para un slot de 2.0s, pero el hueco llega
+    # hasta el start de la unidad 2 (5.0s) → cabe sin comprimirse.
+    # unidad 2: 1.0s de audio para un hueco de 2.0s → tal cual.
     t1 = np.sin(2 * np.pi * 440 * np.arange(int(3.0 * sr)) / sr) * 0.5
     t2 = np.sin(2 * np.pi * 330 * np.arange(int(1.0 * sr)) / sr) * 0.5
     sf.write(str(seg_dir / "0001.wav"), t1, sr)
     sf.write(str(seg_dir / "0002.wav"), t2, sr)
 
-    translation = {
-        "source_language": "en", "target_language": "es",
-        "backend_used": "gemini", "model_name": "test",
+    manifest = {
+        "n_segments": 2, "samplerate": sr, "total_audio_s": 4.0,
         "segments": [
-            {"start": 0.0, "end": 2.0, "source_text": "a", "text": "a"},
-            {"start": 5.0, "end": 7.0, "source_text": "b", "text": "b"},
+            {"index": 1, "file": "0001.wav", "start": 0.0, "end": 2.0,
+             "text": "a.", "duration_s": 3.0, "target_duration_s": 2.0,
+             "source_segments": [0]},
+            {"index": 2, "file": "0002.wav", "start": 5.0, "end": 7.0,
+             "text": "b.", "duration_s": 1.0, "target_duration_s": 2.0,
+             "source_segments": [1]},
         ],
     }
+    (seg_dir / "manifest.json").write_text(json.dumps(manifest))
     tjson = tmp_path / "04_translation.json"
-    tjson.write_text(json.dumps(translation))
+    tjson.write_text("{}")  # aceptado por compat, sin uso
     out = tmp_path / "06_synth_aligned.wav"
 
     proc = subprocess.run(
@@ -61,19 +65,20 @@ def test_align_timing_stretches_and_assembles(tmp_path):
     )
     assert proc.returncode == 0, proc.stderr
     summary = json.loads(proc.stdout.strip().splitlines()[-1])
-    assert summary["stretched"] == 0 and summary["capped"] == 0
-    assert summary["truncated"] == 0
+    assert summary["compressed"] == 0
+    assert summary["max_drift_s"] == 0.0
 
     audio, out_sr = sf.read(str(out))
     assert out_sr == sr
-    # seg 2 empieza en 5.0s → el timeline dura ~6s + cola.
+    # unidad 2 en 5.0s + 100 ms de lead-in → el timeline dura ~6.35s.
     assert 5.5 < len(audio) / sr < 7.0
-    # Hay señal al inicio (seg 1, ocupa 0-3s) y en t=5.2s (seg 2); silencio en t=4.5s.
+    # Señal al inicio (unidad 1: 0.1-3.1s) y en t=5.2s (unidad 2);
+    # silencio en el gap (3.5-4.8s).
     def rms(t0, t1):
         return float(np.sqrt(np.mean(np.square(audio[int(t0 * sr):int(t1 * sr)]))))
-    assert rms(0.0, 1.0) > 0.1
-    assert rms(5.1, 5.8) > 0.1
-    assert rms(4.0, 4.8) < 0.01
+    assert rms(0.2, 1.0) > 0.1
+    assert rms(5.2, 5.9) > 0.1
+    assert rms(3.5, 4.8) < 0.01
 
 
 @needs_ffmpeg

@@ -4,6 +4,8 @@
 #     "fish-speech @ git+https://github.com/fishaudio/fish-speech",
 #     "soundfile>=0.12",
 #     "numpy",
+#     "spacy>=3.8,<3.9",
+#     "es-core-news-lg @ https://github.com/explosion/spacy-models/releases/download/es_core_news_lg-3.8.0/es_core_news_lg-3.8.0-py3-none-any.whl",
 # ]
 #
 # [tool.uv]
@@ -11,9 +13,26 @@
 # # micrófono en fish-speech; lo excluimos del resolve con un marker imposible.
 # override-dependencies = ["pyaudio; sys_platform == 'never'"]
 # ///
-"""Etapa 05: sintetiza los segmentos traducidos con Fish S2 Pro (voz clonada).
+"""Etapa 05: sintetiza ORACIONES COMPLETAS con Fish S2 Pro (voz clonada).
 
-Subprocess-per-stage: carga el modelo UNA vez y procesa todos los segmentos
+Estrategia (rediseño 2026-06): los segmentos de subtítulo se RE-SEGMENTAN
+en unidades-oración antes de sintetizar — Fish produce prosodia mucho más
+natural con oraciones completas que con fragmentos de subtítulo. El timing
+se adapta al audio en align_timing (comprimir poco, nunca estirar, drift
+acotado), no al revés.
+
+Re-segmentación: segmentos consecutivos con gap <= merge-gap se fusionan en
+bloques; cada bloque se divide en oraciones con spaCy (es_core_news_lg, va
+como wheel en las deps PEP 723 — sin descarga en runtime); los timestamps
+del bloque se reparten proporcionalmente a la longitud del texto. El mapeo
+unidad → segmentos originales queda en el manifest (``source_segments``).
+
+Invalidación por unidad: ``05_segments/units.json`` guarda las unidades de
+la última corrida; si una unidad cambió (texto editado en revisión, otra
+fusión), su WAV se borra antes de computar pendientes — la re-síntesis
+parcial del flujo de revisión sale gratis.
+
+Subprocess-per-stage: carga el modelo UNA vez y procesa todas las unidades
 en esta única invocación — el Dual-AR de Fish S2 se mantiene en VRAM entre
 segmentos vía ``TTSInferenceEngine`` (confirmado: el api_server upstream usa
 exactamente este patrón con un ModelManager persistente). Al terminar, el
@@ -52,6 +71,170 @@ def log(msg: str) -> None:
     print(f"[synthesize] {msg}", file=sys.stderr, flush=True)
 
 
+_FINAL_PUNCT = ".!?…"
+
+
+def _merge_by_gap(segments: list[dict], gap_s: float) -> list[dict]:
+    """Fusiona segmentos consecutivos con gap <= gap_s en bloques."""
+    blocks: list[dict] = []
+    for idx, seg in enumerate(segments):
+        if blocks and seg["start"] - blocks[-1]["end"] <= gap_s:
+            blk = blocks[-1]
+            blk["text"] = f"{blk['text']} {seg['text'].strip()}"
+            blk["end"] = seg["end"]
+            blk["source_segments"].append(idx)
+        else:
+            blocks.append({
+                "start": seg["start"], "end": seg["end"],
+                "text": seg["text"].strip(), "source_segments": [idx],
+            })
+    return blocks
+
+
+def _remerge_incomplete(sentences: list[str]) -> list[str]:
+    """Re-fusiona oraciones incompletas (sin puntuación final y <= 20 chars)
+    con la siguiente, y completa la puntuación final faltante."""
+    merged: list[str] = []
+    pending = ""
+    for sent in sentences:
+        sent = sent.strip()
+        if not sent:
+            continue
+        if pending:
+            sent = f"{pending} {sent}"
+            pending = ""
+        if sent[-1] not in _FINAL_PUNCT and len(sent) <= 20:
+            pending = sent
+            continue
+        merged.append(sent)
+    if pending:  # incompleta al final, sin siguiente: unidad propia
+        merged.append(pending)
+    return [s if s[-1] in _FINAL_PUNCT else s + "." for s in merged]
+
+
+def _distribute_times(
+    weights: list[int], start: float, end: float, min_unit_s: float
+) -> list[tuple[float, float]]:
+    """Reparte [start, end] proporcionalmente a weights, con piso min_unit_s.
+
+    Si el bloque alcanza para el piso de todas las unidades, cada una recibe
+    min_unit_s + su parte proporcional del excedente; si no, partes iguales.
+    """
+    n = len(weights)
+    total = end - start
+    if total <= min_unit_s * n:
+        durs = [total / n] * n
+    else:
+        extra = total - min_unit_s * n
+        wsum = sum(weights) or n
+        durs = [min_unit_s + extra * w / wsum for w in weights]
+    spans, t = [], start
+    for d in durs:
+        spans.append((t, t + d))
+        t += d
+    spans[-1] = (spans[-1][0], end)  # cerrar exacto contra el bloque
+    return spans
+
+
+def build_units(
+    segments: list[dict],
+    gap_s: float = 1.0,
+    min_unit_s: float = 1.0,
+    split_sentences=None,
+) -> list[dict]:
+    """Re-segmenta los segmentos traducidos en unidades-oración.
+
+    ``split_sentences(text) -> list[str]`` permite inyectar el splitter
+    (spaCy en producción; los tests usan uno trivial sin cargar el modelo).
+    """
+    if split_sentences is None:
+        split_sentences = _spacy_splitter()
+    units: list[dict] = []
+    for blk in _merge_by_gap(segments, gap_s):
+        sents = _remerge_incomplete(split_sentences(blk["text"]))
+        if not sents:
+            continue
+        spans = _distribute_times(
+            [len(s) for s in sents], blk["start"], blk["end"], min_unit_s
+        )
+        for sent, (s, e) in zip(sents, spans):
+            units.append({
+                "start": round(s, 3), "end": round(e, 3), "text": sent,
+                "source_segments": blk["source_segments"],
+            })
+    return units
+
+
+def _spacy_splitter():
+    """Carga es_core_news_lg (viene como dep PEP 723, sin descarga runtime)."""
+    import spacy
+
+    nlp = spacy.load("es_core_news_lg", exclude=["ner", "lemmatizer"])
+    return lambda text: [s.text for s in nlp(text).sents]
+
+
+def sync_units_state(outdir: Path, units: list[dict]) -> int:
+    """Compara las unidades con units.json de la corrida previa y borra los
+    WAVs de las que cambiaron (texto o timestamps) o sobran. Devuelve
+    cuántos WAVs invalidó. El resume por WAV existente sigue funcionando
+    para las unidades intactas."""
+    state_path = outdir / "units.json"
+    old: list[dict] = []
+    if state_path.exists():
+        old = json.loads(state_path.read_text()).get("units", [])
+    else:
+        # Sin units.json pero con WAVs en disco = job sintetizado ANTES del
+        # rediseño (numeración por segmento, no por unidad): audio inválido.
+        stale = sorted(outdir.glob("[0-9][0-9][0-9][0-9].wav"))
+        if stale:
+            log(f"{len(stale)} WAVs pre-rediseño sin units.json — se "
+                "descartan (la numeración por segmento ya no aplica)")
+            for w in stale:
+                w.unlink()
+    invalidated = 0
+    for i, unit in enumerate(units, start=1):
+        prev = old[i - 1] if i <= len(old) else None
+        if prev is not None and (
+            prev["text"] != unit["text"]
+            or abs(prev["start"] - unit["start"]) > 1e-3
+            or abs(prev["end"] - unit["end"]) > 1e-3
+        ):
+            if (outdir / f"{i:04d}.wav").exists():
+                (outdir / f"{i:04d}.wav").unlink()
+                invalidated += 1
+    for j in range(len(units) + 1, len(old) + 1):  # unidades sobrantes
+        if (outdir / f"{j:04d}.wav").exists():
+            (outdir / f"{j:04d}.wav").unlink()
+            invalidated += 1
+    state_path.write_text(json.dumps({"units": units}, indent=2,
+                                     ensure_ascii=False))
+    return invalidated
+
+
+def trim_final_silence(
+    audio, sr: int, threshold_db: float = -45.0, window_ms: float = 10.0,
+    max_trim_ms: float = 500.0, min_trim_ms: float = 50.0
+):
+    """Recorta silencio SOLO del final (ventanas RMS de 10 ms, máx 500 ms,
+    solo si hay > 50 ms). NUNCA toca el inicio: el padding ". " genera un
+    silencio inicial deseado. Devuelve (audio, segundos_recortados)."""
+    import numpy as np
+
+    win = max(1, int(sr * window_ms / 1000.0))
+    thr = 10.0 ** (threshold_db / 20.0)
+    pos, silent = len(audio), 0
+    while pos > 0:
+        w = audio[max(0, pos - win):pos]
+        if np.sqrt(np.mean(np.square(w))) > thr:
+            break
+        silent += len(w)
+        pos -= len(w)
+    if silent / sr * 1000.0 <= min_trim_ms:
+        return audio, 0.0
+    trim = min(silent, int(sr * max_trim_ms / 1000.0))
+    return audio[: len(audio) - trim], trim / sr
+
+
 def extract_reference(
     vocals_path: Path, segments: list[dict], min_s: float = 10.0, max_s: float = 15.0
 ) -> tuple[bytes, str]:
@@ -88,10 +271,22 @@ def main() -> int:
     parser.add_argument("--model-dir", default="models/tts/fish-s2-pro")
     parser.add_argument("--half", action="store_true",
                         help="FP16 en vez de BF16 (fallback de VRAM)")
-    # ~21.5 frames/s: 512 tokens ≈ 24 s de audio por chunk — de sobra para
-    # subtítulos y acota las activaciones del decode si la generación se
-    # desboca (con 1024 un runaway decodificaba ~47 s en una pasada).
-    parser.add_argument("--max-new-tokens", type=int, default=512)
+    # Oraciones completas necesitan más presupuesto que subtítulos; el
+    # chunking interno (chunk_length=120) mantiene acotado el decode aunque
+    # la generación se alargue.
+    parser.add_argument("--max-new-tokens", type=int, default=1024)
+    parser.add_argument("--seed", type=int, default=42,
+                        help="seed fija por job: misma voz/prosodia "
+                             "reproducible en todos los segmentos")
+    parser.add_argument("--temperature", type=float, default=0.8)
+    parser.add_argument("--top-p", type=float, default=0.8)
+    parser.add_argument("--repetition-penalty", type=float, default=1.1)
+    parser.add_argument("--merge-gap-ms", type=float, default=1000.0,
+                        help="gap máximo entre subtítulos para fusionarlos")
+    parser.add_argument("--min-unit-ms", type=float, default=1000.0,
+                        help="duración mínima por unidad-oración")
+    parser.add_argument("--trim-threshold-db", type=float, default=-45.0)
+    parser.add_argument("--trim-max-ms", type=float, default=500.0)
     # OJO: generate_long exige prompt <= max_seq_len - 2048 (headroom
     # hardcodeado upstream), así que 4096 es el mínimo práctico.
     parser.add_argument("--max-seq-len", type=int, default=4096,
@@ -107,7 +302,7 @@ def main() -> int:
                         help="máximo de segmentos a sintetizar en ESTA "
                              "invocación (0 = todos). El orquestador lo usa "
                              "para procesar por lotes: el proceso muere entre "
-                             "lotes y el OS recupera el 100% de la VRAM, "
+                             "lotes y el OS recupera el 100%% de la VRAM, "
                              "cortando el leak gradual del engine (~14.4→14.9 "
                              "GB a lo largo de ~100 segmentos)")
     args = parser.parse_args()
@@ -117,21 +312,33 @@ def main() -> int:
     outdir = Path(args.outdir)
     outdir.mkdir(parents=True, exist_ok=True)
 
+    # Re-segmentación a oraciones completas (spaCy, CPU).
+    units = build_units(
+        segments,
+        gap_s=args.merge_gap_ms / 1000.0,
+        min_unit_s=args.min_unit_ms / 1000.0,
+    )
+    log(f"re-segmentación: {len(segments)} segmentos → {len(units)} "
+        f"oraciones (gap <= {args.merge_gap_ms:.0f} ms)")
+    invalidated = sync_units_state(outdir, units)
+    if invalidated:
+        log(f"{invalidated} WAV(s) invalidados (unidades cambiadas)")
+
     # Reanudación: los WAVs ya generados (por lotes previos o por una
-    # corrida interrumpida) se saltan — caché por segmento de facto.
+    # corrida interrumpida) se saltan — caché por unidad de facto.
     pending = [
-        (i, seg) for i, seg in enumerate(segments, start=1)
+        (i, unit) for i, unit in enumerate(units, start=1)
         if not _wav_ok(outdir / f"{i:04d}.wav")
     ]
     if args.max_segments > 0:
         batch = pending[: args.max_segments]
     else:
         batch = pending
-    log(f"{len(segments)} segmentos: {len(segments) - len(pending)} ya en "
+    log(f"{len(units)} unidades: {len(units) - len(pending)} ya en "
         f"disco, {len(pending)} pendientes, {len(batch)} en este lote")
 
     if not batch:
-        _write_manifest_and_summary(outdir, segments, batch_done=0)
+        _write_manifest_and_summary(outdir, units, batch_done=0)
         return 0
 
     if args.reference:
@@ -209,26 +416,21 @@ def main() -> int:
     log(f"modelos cargados en {time.monotonic() - t0:.1f}s")
 
     reference = ServeReferenceAudio(audio=ref_audio, text=ref_text)
-    total_audio_s, total_gen_s = 0.0, 0.0
+    total_audio_s, total_gen_s, total_trim_s = 0.0, 0.0, 0.0
+    log(f"seed del job: {args.seed} | temperature={args.temperature} "
+        f"top_p={args.top_p} repetition_penalty={args.repetition_penalty}")
 
-    for i, seg in batch:
-        # Anti-alucinación: sin puntuación final fuerte el AR sigue
-        # generando audio de más al final del segmento.
-        text = seg["text"].strip()
-        if text and text[-1] not in ".!?…":
+    for i, unit in batch:
+        # Red de seguridad anti-alucinación (la re-segmentación ya completa
+        # puntuación): sin puntuación final fuerte el AR divaga al final.
+        text = unit["text"].strip()
+        if text and text[-1] not in _FINAL_PUNCT:
             text += "."
+        # Prefijo ". ": estabiliza el arranque de la generación (genera un
+        # silencio inicial corto y deseado; el trim solo toca el final).
+        if text and text[0] not in ".!?…,;:":
+            text = ". " + text
 
-        # Cap de tokens proporcional al slot disponible (~21.5 frames/s de
-        # audio + 70% de holgura): acota cuánto puede divagar el AR.
-        slot_s = seg["end"] - seg["start"]
-        max_new_tokens = min(args.max_new_tokens, max(48, int(slot_s * 21.5 * 1.7)))
-        if max_new_tokens < args.max_new_tokens:
-            log(f"segmento {i}: cap de tokens {max_new_tokens} "
-                f"(slot {slot_s:.2f}s, default {args.max_new_tokens})")
-
-        # Textos muy cortos ("No.", "Sí.") con sampling default producen
-        # vocales sostenidas antinaturales: bajar temperatura y penalización.
-        short = len(text) <= 12
         req = ServeTTSRequest(
             text=text,
             references=[reference],
@@ -245,23 +447,34 @@ def main() -> int:
             # pico de activaciones del encoder sumado a los pesos BF16
             # superaba los 16 GB.
             use_memory_cache="on",
-            max_new_tokens=max_new_tokens,
-            temperature=0.4 if short else 0.7,
-            top_p=0.7,
-            repetition_penalty=1.05 if short else 1.2,
+            max_new_tokens=args.max_new_tokens,
+            temperature=args.temperature,
+            top_p=args.top_p,
+            repetition_penalty=args.repetition_penalty,
+            seed=args.seed,
         )
+        # Misma seed para TODAS las unidades del job: prosodia consistente.
+        torch.manual_seed(args.seed)
         t0 = time.monotonic()
         final = None
         for result in engine.inference(req):
             if result.code == "error":
-                raise RuntimeError(f"segmento {i}: {result.error}")
+                raise RuntimeError(f"unidad {i}: {result.error}")
             if result.code == "final":
                 final = result.audio
         if final is None:
-            raise RuntimeError(f"segmento {i}: el engine no produjo audio final")
+            raise RuntimeError(f"unidad {i}: el engine no produjo audio final")
 
         gen_s = time.monotonic() - t0
         sr, audio = final
+        audio, trimmed_s = trim_final_silence(
+            audio, sr, threshold_db=args.trim_threshold_db,
+            max_trim_ms=args.trim_max_ms,
+        )
+        if trimmed_s:
+            total_trim_s += trimmed_s
+            log(f"unidad {i}: {trimmed_s * 1000:.0f} ms de silencio final "
+                "recortados")
         wav_path = outdir / f"{i:04d}.wav"
         sf.write(str(wav_path), audio, sr)
 
@@ -272,7 +485,7 @@ def main() -> int:
             torch.cuda.max_memory_allocated() / (1024**3)
             if torch.cuda.is_available() else 0.0
         )
-        log(f"segmento {i}/{len(segments)}: {audio_s:.1f}s de audio en "
+        log(f"unidad {i}/{len(units)}: {audio_s:.1f}s de audio en "
             f"{gen_s:.1f}s (RTF={gen_s / max(audio_s, 0.01):.2f}, "
             f"pico VRAM {peak_gb:.1f} GB)")
 
@@ -285,8 +498,9 @@ def main() -> int:
         gc.collect()
 
     rtf = total_gen_s / max(total_audio_s, 0.01)
-    log(f"lote completado: {len(batch)} segmentos, RTF del lote={rtf:.2f}")
-    _write_manifest_and_summary(outdir, segments, batch_done=len(batch), rtf=rtf)
+    log(f"lote completado: {len(batch)} unidades, RTF del lote={rtf:.2f}, "
+        f"trim total {total_trim_s:.1f}s")
+    _write_manifest_and_summary(outdir, units, batch_done=len(batch), rtf=rtf)
     return 0
 
 
@@ -296,16 +510,19 @@ def _wav_ok(path: Path) -> bool:
 
 
 def _write_manifest_and_summary(
-    outdir: Path, segments: list[dict], *, batch_done: int, rtf: float | None = None
+    outdir: Path, units: list[dict], *, batch_done: int, rtf: float | None = None
 ) -> None:
     """Escribe el manifest SOLO cuando todos los WAVs existen.
 
-    El resumen de stdout siempre reporta el progreso; el orquestador
-    relanza el stage (nuevo subproceso → VRAM limpia) mientras
-    ``remaining > 0``.
+    Las entradas son unidades-oración: traen start/end (timestamps
+    repartidos del bloque original), texto y ``source_segments`` (índices
+    de los segmentos de 04_translation.json que las componen) — es lo que
+    align_timing usa para colocar el audio. El resumen de stdout siempre
+    reporta el progreso; el orquestador relanza el stage (nuevo subproceso
+    → VRAM limpia) mientras ``remaining > 0``.
     """
     remaining = [
-        i for i in range(1, len(segments) + 1)
+        i for i in range(1, len(units) + 1)
         if not _wav_ok(outdir / f"{i:04d}.wav")
     ]
     complete = not remaining
@@ -314,13 +531,16 @@ def _write_manifest_and_summary(
         import soundfile as sf
 
         results, sr = [], None
-        for i, seg in enumerate(segments, start=1):
+        for i, unit in enumerate(units, start=1):
             info = sf.info(str(outdir / f"{i:04d}.wav"))
             sr = sr or info.samplerate
             results.append({
                 "index": i, "file": f"{i:04d}.wav",
+                "start": unit["start"], "end": unit["end"],
+                "text": unit["text"],
                 "duration_s": round(info.duration, 3),
-                "target_duration_s": round(seg["end"] - seg["start"], 3),
+                "target_duration_s": round(unit["end"] - unit["start"], 3),
+                "source_segments": unit["source_segments"],
             })
         manifest = {
             "n_segments": len(results),
@@ -328,8 +548,9 @@ def _write_manifest_and_summary(
             "total_audio_s": round(sum(r["duration_s"] for r in results), 2),
             "segments": results,
         }
-        (outdir / "manifest.json").write_text(json.dumps(manifest, indent=2))
-        log(f"manifest escrito: {len(results)} segmentos completos")
+        (outdir / "manifest.json").write_text(
+            json.dumps(manifest, indent=2, ensure_ascii=False))
+        log(f"manifest escrito: {len(results)} unidades completas")
 
     print(json.dumps({
         "stage": "synthesize",
