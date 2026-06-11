@@ -12,6 +12,19 @@ translation_context_window: 8   # segmentos previos como contexto (backend local
 # local_llm_path: "models/llm/Qwen3.6-35B-A3B-IQ4_XS.gguf"  # default: primer .gguf en models/llm/
 tts_model_dir: "models/tts/fish-s2-pro"
 tts_half: false   # true = FP16 fallback si hay presión de VRAM (default BF16)
-max_speed: 1.15            # aceleración máxima en align_timing (sin cambiar pitch)
 instrumental_volume: 0.7   # volumen de la música de fondo en la mezcla final
-synthesize_batch_size: 25  # segmentos por subproceso de síntesis (anti-leak)
+synthesize_batch_size: 25  # unidades por subproceso de síntesis (anti-leak)
+
+# --- Síntesis por oraciones (synthesize) ---
+synth_seed: 42                 # misma seed para todo el job (prosodia reproducible)
+synth_temperature: 0.8
+synth_top_p: 0.8
+synth_repetition_penalty: 1.1
+synth_max_new_tokens: 1024
+synth_trim_threshold_db: -45   # trim de silencio SOLO al final de cada WAV
+synth_trim_max_ms: 500
+merge_gap_ms: 1000             # gap máximo entre subtítulos para fusionar en oración
+unit_min_duration_ms: 1000     # duración mínima por unidad-oración
+
+# --- Ensamblado cursor/drift (align_timing) ---
+max_compression: 1.2       # compresión máxima de rubberband (NUNCA se estira)

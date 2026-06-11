@@ -584,25 +584,47 @@ hardware objetivo. Decisiones tomadas:
   antes que el video y el instrumental (duración del original) completa
   la pista. Con `duration=first` + `-shortest` el video quedaba recortado
   a la duración de la voz (bug encontrado en el e2e).
-- Config: `max_speed` (1.15) e `instrumental_volume` (0.7) en
-  pipeline.yaml, incluidos en el hash de caché de sus etapas.
+- Config: `max_compression` (1.2, antes `max_speed`) e
+  `instrumental_volume` (0.7) en pipeline.yaml, incluidos en el hash de
+  caché de sus etapas.
 - E2e validado: fixture → 07_final.mp4 con video+audio, 10 s, voz española
   clonada + tono de fondo preservado.
-- **Calidad de audio (post-M6, 2026-06-10)** — 4 fixes CPU/texto:
-  1. synthesize: punto final forzado si falta `.!?…` (anti-alucinación),
-     cap de tokens proporcional al slot (`slot_s*21.5*1.7`, mín 48) y
-     sampling suave para textos ≤12 chars (temp 0.4 / rep 1.05) que
-     evitaban vocales sostenidas en "No.", "Sí.".
-  2. align_timing: `trim_trailing_silence` (-40 dB, margen 150 ms) por
-     WAV ANTES de medir — las colas de Fish inflaban la velocidad
-     uniforme y disparaban excepciones falsas.
-  3. align_timing: estrategia de **velocidad uniforme global** (audio ES
-     total / slots EN total, cap max_speed) + excepción suavizada
-     `min(needed, max(uniform*1.15, max_speed), 2.0)` por segmento.
-  4. align_timing: en el ensamblado ningún segmento pasa del inicio del
-     siguiente (-30 ms); el desborde se trunca con fade-out de 80 ms en
-     vez de sumar dos voces. Summary: `truncated`, `trimmed_silence_s`.
-  Tests CPU en `tests/test_align_timing_helpers.py`.
+- **REDISEÑO síntesis por oraciones + cursor/drift (2026-06-11)** —
+  reemplaza tanto la estrategia original "audio forzado al slot" como los
+  4 fixes de calidad del 2026-06-10 (commit a8d8333), cuyo código quedó
+  eliminado. Principio: se sintetizan ORACIONES COMPLETAS y el timing se
+  adapta al audio (comprimir poco, NUNCA estirar, drift acotado).
+  - **synthesize**: re-segmenta los subtítulos antes de sintetizar —
+    fusiona segmentos con gap ≤ `merge_gap_ms` (1000), divide en oraciones
+    con spaCy `es_core_news_lg` (wheel fijado en las deps PEP 723, sin
+    descarga en runtime), re-fusiona incompletas (≤20 chars sin puntuación
+    final) y reparte timestamps proporcional a la longitud (piso
+    `unit_min_duration_ms`). El manifest gana `start`/`end`/`text`/
+    `source_segments` por unidad; los WAVs se numeran POR UNIDAD.
+    `05_segments/units.json` guarda las unidades de la última corrida:
+    al re-correr se invalidan solo los WAVs de unidades cambiadas (la
+    re-síntesis parcial del flujo de revisión sigue funcionando; el server
+    ya NO borra WAVs por índice). WAVs sin units.json = job pre-rediseño
+    → se descartan todos. Inferencia: prefijo ". " (arranque estable),
+    parámetros fijos temperature 0.8 / top_p 0.8 / repetition_penalty 1.1
+    / max_new_tokens 1024, seed fija por job (`synth_seed`, 42). Trim de
+    silencio SOLO al final de cada WAV (−45 dB, ventanas 10 ms, máx
+    500 ms, solo si hay >50 ms); el inicio nunca se toca.
+  - **align_timing**: ensamblado con cursor — cada unidad se coloca en
+    `max(start_original, cursor)`; si el audio no cabe hasta el start de
+    la siguiente, rubberband comprime solo lo necesario (cap
+    `max_compression` 1.2x); si ni así cabe, se coloca completo y el
+    drift desplaza lo que sigue (se reabsorbe en gaps naturales). Válvula:
+    drift > 500 ms eleva el cap a 1.5x hasta que baje de 100 ms. +100 ms
+    de lead-in por unidad. Lee las unidades del manifest, NO de
+    04_translation.json (`--translation` se acepta por compat, sin uso).
+    Summary: `compressed`, `max_drift_s`, `final_drift_s`.
+  - Config nueva en pipeline.yaml (`synth_*`, `merge_gap_ms`,
+    `unit_min_duration_ms`, `max_compression` — `max_speed` eliminado),
+    toda en el hash de caché → la caché de synthesize de los jobs viejos
+    queda invalidada (re-síntesis completa esperada en el próximo run).
+  Tests CPU: `tests/test_sentence_merge.py` (fusión/split/timestamps/
+  units.json) y `tests/test_align_timing_helpers.py` (cursor/drift).
 
 ---
 

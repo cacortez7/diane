@@ -255,8 +255,21 @@ class Orchestrator:
                     stage_args += ["--model-dir", str(self.config["tts_model_dir"])]
                 if self.config.get("tts_half"):
                     stage_args += ["--half"]
-            elif spec.name == "align_timing" and self.config.get("max_speed"):
-                stage_args += ["--max-speed", str(self.config["max_speed"])]
+                for key, flag in [
+                    ("synth_seed", "--seed"),
+                    ("synth_temperature", "--temperature"),
+                    ("synth_top_p", "--top-p"),
+                    ("synth_repetition_penalty", "--repetition-penalty"),
+                    ("synth_max_new_tokens", "--max-new-tokens"),
+                    ("synth_trim_threshold_db", "--trim-threshold-db"),
+                    ("synth_trim_max_ms", "--trim-max-ms"),
+                    ("merge_gap_ms", "--merge-gap-ms"),
+                    ("unit_min_duration_ms", "--min-unit-ms"),
+                ]:
+                    if self.config.get(key) is not None:
+                        stage_args += [flag, str(self.config[key])]
+            elif spec.name == "align_timing" and self.config.get("max_compression"):
+                stage_args += ["--max-compression", str(self.config["max_compression"])]
             elif spec.name == "compose" and self.config.get("instrumental_volume"):
                 stage_args += ["--instrumental-volume", str(self.config["instrumental_volume"])]
             if spec.min_free_vram_mib and vram.is_available():
@@ -468,8 +481,14 @@ class Orchestrator:
             "extract_audio": [],
             "separate_vocals": [],
             "transcribe": ["source_language"],
-            "synthesize": ["tts_model_dir", "tts_half"],
-            "align_timing": ["max_speed"],
+            "synthesize": [
+                "tts_model_dir", "tts_half",
+                "synth_seed", "synth_temperature", "synth_top_p",
+                "synth_repetition_penalty", "synth_max_new_tokens",
+                "synth_trim_threshold_db", "synth_trim_max_ms",
+                "merge_gap_ms", "unit_min_duration_ms",
+            ],
+            "align_timing": ["max_compression"],
             "compose": ["instrumental_volume"],
             "translate": [
                 "translation_backend",
