@@ -268,6 +268,8 @@ class Orchestrator:
                 ]:
                     if self.config.get(key) is not None:
                         stage_args += [flag, str(self.config[key])]
+                if self.config.get("synth_text_padding"):
+                    stage_args += ["--text-padding"]
             elif spec.name == "align_timing" and self.config.get("max_compression"):
                 stage_args += ["--max-compression", str(self.config["max_compression"])]
             elif spec.name == "compose" and self.config.get("instrumental_volume"):
@@ -486,6 +488,7 @@ class Orchestrator:
                 "synth_seed", "synth_temperature", "synth_top_p",
                 "synth_repetition_penalty", "synth_max_new_tokens",
                 "synth_trim_threshold_db", "synth_trim_max_ms",
+                "synth_text_padding",
                 "merge_gap_ms", "unit_min_duration_ms",
             ],
             "align_timing": ["max_compression"],

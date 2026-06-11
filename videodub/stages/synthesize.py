@@ -216,8 +216,8 @@ def trim_final_silence(
     max_trim_ms: float = 500.0, min_trim_ms: float = 50.0
 ):
     """Recorta silencio SOLO del final (ventanas RMS de 10 ms, máx 500 ms,
-    solo si hay > 50 ms). NUNCA toca el inicio: el padding ". " genera un
-    silencio inicial deseado. Devuelve (audio, segundos_recortados)."""
+    solo si hay > 50 ms). NUNCA toca el inicio (el arranque natural de la
+    oración no se recorta). Devuelve (audio, segundos_recortados)."""
     import numpy as np
 
     win = max(1, int(sr * window_ms / 1000.0))
@@ -281,6 +281,10 @@ def main() -> int:
     parser.add_argument("--temperature", type=float, default=0.8)
     parser.add_argument("--top-p", type=float, default=0.8)
     parser.add_argument("--repetition-penalty", type=float, default=1.1)
+    parser.add_argument("--text-padding", action="store_true",
+                        help="prefijo '. ' antes de cada texto (calibrado "
+                             "para S1-mini; en S2 Pro produce alucinaciones "
+                             "de idioma — default off)")
     parser.add_argument("--merge-gap-ms", type=float, default=1000.0,
                         help="gap máximo entre subtítulos para fusionarlos")
     parser.add_argument("--min-unit-ms", type=float, default=1000.0,
@@ -426,10 +430,17 @@ def main() -> int:
         text = unit["text"].strip()
         if text and text[-1] not in _FINAL_PUNCT:
             text += "."
-        # Prefijo ". ": estabiliza el arranque de la generación (genera un
-        # silencio inicial corto y deseado; el trim solo toca el final).
-        if text and text[0] not in ".!?…,;:":
+        # Prefijo ". " SOLO con --text-padding (S1-mini): en S2 Pro el
+        # padding disparaba alucinaciones de idioma (japonés/coreano).
+        if args.text_padding and text and text[0] not in ".!?…,;:":
             text = ". " + text
+
+        # Cap de tokens por longitud del texto (~8 tokens/char con piso
+        # 128): acota los runaways del AR sin recortar oraciones largas.
+        max_new_tokens = min(args.max_new_tokens, max(128, len(text) * 8))
+        if max_new_tokens < args.max_new_tokens:
+            log(f"unidad {i}: cap de tokens {max_new_tokens} "
+                f"({len(text)} chars, default {args.max_new_tokens})")
 
         req = ServeTTSRequest(
             text=text,
@@ -447,7 +458,7 @@ def main() -> int:
             # pico de activaciones del encoder sumado a los pesos BF16
             # superaba los 16 GB.
             use_memory_cache="on",
-            max_new_tokens=args.max_new_tokens,
+            max_new_tokens=max_new_tokens,
             temperature=args.temperature,
             top_p=args.top_p,
             repetition_penalty=args.repetition_penalty,
